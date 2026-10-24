@@ -1,0 +1,385 @@
+import {
+  Novel,
+  Chapter,
+  Announcement,
+  ReadingProgress,
+  Comment,
+  AdminUser,
+  SiteSettings,
+  AdminStats,
+  NewChapterAlertData
+} from '../types';
+
+const AUTH_TOKEN_KEY = 'akhyana_auth_token';
+const READER_ID_KEY = 'akhyana_reader_id';
+const DISMISSED_ANNOUNCEMENTS_KEY = 'akhyana_dismissed_announcements';
+const BOOKMARKS_KEY = 'akhyana_bookmarked_novels';
+
+// Generate or retrieve persistent anonymous reader ID for reading progress & notifications
+export function getReaderId(): string {
+  let id = localStorage.getItem(READER_ID_KEY);
+  if (!id) {
+    id = 'reader_' + Math.random().toString(36).substring(2, 12) + Date.now().toString(36);
+    localStorage.setItem(READER_ID_KEY, id);
+  }
+  return id;
+}
+
+export function getBookmarks(): string[] {
+  try {
+    const raw = localStorage.getItem(BOOKMARKS_KEY);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+
+export function toggleBookmark(novelSlug: string): boolean {
+  const current = getBookmarks();
+  const exists = current.includes(novelSlug);
+  const updated = exists ? current.filter(s => s !== novelSlug) : [...current, novelSlug];
+  localStorage.setItem(BOOKMARKS_KEY, JSON.stringify(updated));
+  return !exists;
+}
+
+export function getAuthToken(): string | null {
+  return localStorage.getItem(AUTH_TOKEN_KEY);
+}
+
+export function setAuthToken(token: string) {
+  localStorage.setItem(AUTH_TOKEN_KEY, token);
+}
+
+export function removeAuthToken() {
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+function getHeaders(hasBody: boolean = false): HeadersInit {
+  const headers: Record<string, string> = {};
+  if (hasBody) {
+    headers['Content-Type'] = 'application/json';
+  }
+  const token = getAuthToken();
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+export const api = {
+  // Authentication
+  async login(email: string, password: string): Promise<{ token: string; user: AdminUser }> {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email, password })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Login failed' }));
+      throw new Error(err.error || 'Authentication error');
+    }
+    const data = await res.json();
+    setAuthToken(data.token);
+    return data;
+  },
+
+  async verifySession(): Promise<AdminUser | null> {
+    const token = getAuthToken();
+    if (!token) return null;
+    try {
+      const res = await fetch('/api/auth/session', {
+        headers: getHeaders()
+      });
+      if (!res.ok) {
+        removeAuthToken();
+        return null;
+      }
+      const data = await res.json();
+      return data.user;
+    } catch {
+      return null;
+    }
+  },
+
+  async logout(): Promise<void> {
+    try {
+      await fetch('/api/auth/logout', {
+        method: 'POST',
+        headers: getHeaders()
+      });
+    } finally {
+      removeAuthToken();
+    }
+  },
+
+  // Novels
+  async getNovels(): Promise<Novel[]> {
+    const res = await fetch('/api/novels');
+    if (!res.ok) throw new Error('Failed to load novels');
+    return res.json();
+  },
+
+  async getNovel(slug: string): Promise<Novel> {
+    const res = await fetch(`/api/novels/${slug}`);
+    if (!res.ok) throw new Error('Novel not found');
+    return res.json();
+  },
+
+  async saveNovel(novel: Partial<Novel>): Promise<Novel> {
+    const isUpdate = Boolean(novel.id && !novel.id.startsWith('new-'));
+    const url = isUpdate ? `/api/novels/${novel.slug}` : '/api/novels';
+    const method = isUpdate ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: getHeaders(true),
+      body: JSON.stringify(novel)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to save novel' }));
+      throw new Error(err.error || 'Failed to save novel');
+    }
+    return res.json();
+  },
+
+  async deleteNovel(slug: string): Promise<void> {
+    const res = await fetch(`/api/novels/${slug}`, {
+      method: 'DELETE',
+      headers: getHeaders()
+    });
+    if (!res.ok) throw new Error('Failed to delete novel');
+  },
+
+  // Chapters
+  async getChapters(novelSlug: string, includeDrafts: boolean = false): Promise<Chapter[]> {
+    const url = `/api/novels/${novelSlug}/chapters${includeDrafts ? '?include_drafts=true' : ''}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Failed to load chapters');
+    return res.json();
+  },
+
+  async getChapter(idOrSlug: string, novelSlug?: string): Promise<Chapter> {
+    const url = `/api/chapters/${idOrSlug}${novelSlug ? `?novel=${novelSlug}` : ''}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error('Chapter not found');
+    return res.json();
+  },
+
+  async saveChapter(chapter: Partial<Chapter>): Promise<Chapter> {
+    const isUpdate = !!chapter.id && !chapter.id.startsWith('new-');
+    const url = isUpdate ? `/api/chapters/${chapter.id}` : '/api/chapters';
+    const method = isUpdate ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: getHeaders(true),
+      body: JSON.stringify(chapter)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to save chapter' }));
+      throw new Error(err.error || 'Failed to save chapter');
+    }
+    return res.json();
+  },
+
+  async deleteChapter(id: string): Promise<void> {
+    const res = await fetch(`/api/chapters/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders()
+    });
+    if (!res.ok) throw new Error('Failed to delete chapter');
+  },
+
+  // Reading Progress & Alerts
+  async recordProgress(novelSlug: string, chapter: Chapter, percent: number = 100): Promise<void> {
+    const readerId = getReaderId();
+    await fetch('/api/reading-progress', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        reader_id: readerId,
+        novel_slug: novelSlug,
+        last_chapter_id: chapter.id,
+        last_chapter_number: chapter.chapter_number,
+        progress_percent: percent
+      })
+    }).catch(err => console.warn('Could not record progress', err));
+  },
+
+  async getReadingProgress(): Promise<ReadingProgress[]> {
+    const readerId = getReaderId();
+    const res = await fetch(`/api/reading-progress?reader_id=${readerId}`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async getNewChapterAlerts(): Promise<NewChapterAlertData[]> {
+    const readerId = getReaderId();
+    const res = await fetch(`/api/reading-progress/alerts?reader_id=${readerId}`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  // Announcements
+  async getAnnouncements(all: boolean = false): Promise<Announcement[]> {
+    const res = await fetch(`/api/announcements${all ? '?all=true' : ''}`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async saveAnnouncement(ann: Partial<Announcement>): Promise<Announcement> {
+    const isUpdate = !!ann.id && !ann.id.startsWith('new-');
+    const url = isUpdate ? `/api/announcements/${ann.id}` : '/api/announcements';
+    const method = isUpdate ? 'PUT' : 'POST';
+    const res = await fetch(url, {
+      method,
+      headers: getHeaders(true),
+      body: JSON.stringify(ann)
+    });
+    if (!res.ok) throw new Error('Failed to save announcement');
+    return res.json();
+  },
+
+  async deleteAnnouncement(id: string): Promise<void> {
+    const res = await fetch(`/api/announcements/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders()
+    });
+    if (!res.ok) throw new Error('Failed to delete announcement');
+  },
+
+  getDismissedAnnouncements(): string[] {
+    try {
+      const raw = localStorage.getItem(DISMISSED_ANNOUNCEMENTS_KEY);
+      return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  },
+
+  dismissAnnouncement(id: string) {
+    const current = api.getDismissedAnnouncements();
+    if (!current.includes(id)) {
+      localStorage.setItem(DISMISSED_ANNOUNCEMENTS_KEY, JSON.stringify([...current, id]));
+    }
+  },
+
+  // Comments
+  async getComments(novelSlug: string): Promise<Comment[]> {
+    const res = await fetch(`/api/novels/${novelSlug}/comments`);
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async getAllComments(): Promise<Comment[]> {
+    const res = await fetch('/api/admin/comments', { headers: getHeaders() });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async postComment(novelSlug: string, author_name: string, content: string): Promise<Comment> {
+    const res = await fetch(`/api/novels/${novelSlug}/comments`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ author_name, content })
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to post comment' }));
+      throw new Error(err.error || 'Failed to submit discussion comment');
+    }
+    return res.json();
+  },
+
+  async updateCommentStatus(id: string, status: 'approved' | 'hidden'): Promise<void> {
+    const res = await fetch(`/api/comments/${id}/status`, {
+      method: 'PUT',
+      headers: getHeaders(true),
+      body: JSON.stringify({ status })
+    });
+    if (!res.ok) throw new Error('Failed to update comment');
+  },
+
+  async deleteComment(id: string): Promise<void> {
+    const res = await fetch(`/api/comments/${id}`, {
+      method: 'DELETE',
+      headers: getHeaders()
+    });
+    if (!res.ok) throw new Error('Failed to delete comment');
+  },
+
+  // Site Settings
+  async getSettings(): Promise<SiteSettings> {
+    const res = await fetch('/api/site-settings');
+    if (!res.ok) throw new Error('Failed to load site settings');
+    return res.json();
+  },
+
+  async updateSettings(settings: Partial<SiteSettings>): Promise<SiteSettings> {
+    const res = await fetch('/api/site-settings', {
+      method: 'PUT',
+      headers: getHeaders(true),
+      body: JSON.stringify(settings)
+    });
+    if (!res.ok) throw new Error('Failed to save settings');
+    return res.json();
+  },
+
+  // Admin stats & users
+  async getAdminStats(): Promise<AdminStats> {
+    const res = await fetch('/api/admin/stats', { headers: getHeaders() });
+    if (!res.ok) throw new Error('Failed to load stats');
+    return res.json();
+  },
+
+  async getAdminUsers(): Promise<AdminUser[]> {
+    const res = await fetch('/api/admin/users', { headers: getHeaders() });
+    if (!res.ok) return [];
+    return res.json();
+  },
+
+  async createAdminUser(userData: { email: string; name: string; role: string; password: string }): Promise<AdminUser> {
+    const res = await fetch('/api/admin/users', {
+      method: 'POST',
+      headers: getHeaders(true),
+      body: JSON.stringify(userData)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to create user' }));
+      throw new Error(err.error || 'Failed to create admin');
+    }
+    return res.json();
+  },
+
+  // Cover image upload
+  async uploadCover(file: File): Promise<{ url: string; filename: string; size: number }> {
+    const validTypes = ['image/jpeg', 'image/png', 'image/webp'];
+    if (!validTypes.includes(file.type)) {
+      throw new Error('Unsupported image format. Please select a JPEG, PNG, or WebP file.');
+    }
+    const MAX_SIZE = 5 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      throw new Error('Image size exceeds 5MB limit. Please choose a smaller image.');
+    }
+
+    const base64Data = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = () => reject(new Error('Failed to read file from device'));
+      reader.readAsDataURL(file);
+    });
+
+    const res = await fetch('/api/upload/cover', {
+      method: 'POST',
+      headers: getHeaders(true),
+      body: JSON.stringify({
+        data: base64Data,
+        filename: file.name
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Upload failed' }));
+      throw new Error(err.error || 'Failed to upload cover image');
+    }
+
+    return res.json();
+  }
+};

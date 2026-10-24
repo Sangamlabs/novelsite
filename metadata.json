@@ -1,0 +1,6 @@
+{
+  "name": "Akhyana — Multilingual Novel Publishing",
+  "description": "Original novels, light novels, and multilingual literary reading platform with a serene Forest Quiet editorial aesthetic.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

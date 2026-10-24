@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --color-bg-page: #EEF0E4;
+    --color-text-main: #28311F;
+    --color-deep-moss: #2C3A22;
+    --color-pale-sage: #DDE5D2;
+    --color-muted-text: #68715F;
+    --color-gold-accent: #B08D46;
+    --font-serif-main: "Times New Roman", Times, "Cormorant Garamond", "Noto Serif JP", serif;
+  }
+
+  body {
+    font-family: var(--font-serif-main);
+    background-color: var(--color-bg-page);
+    color: var(--color-text-main);
+    overflow-x: hidden;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: var(--font-serif-main);
+    letter-spacing: -0.01em;
+  }
+}
+
+/* Glass panel styled according to Forest Quiet spec */
+.glass-panel {
+  background: rgba(255, 255, 255, 0.58);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.78);
+  box-shadow: 0 8px 32px 0 rgba(44, 58, 34, 0.05);
+}
+
+.glass-panel-subtle {
+  background: rgba(246, 248, 242, 0.72);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+}
+
+.glass-panel-dark {
+  background: rgba(30, 38, 25, 0.88);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Reader specific theme canvases */
+.reader-canvas-sage {
+  background-color: #EEF0E4;
+  color: #28311F;
+}
+
+.reader-canvas-paper {
+  background-color: #F8F9F3;
+  color: #1F2818;
+}
+
+.reader-canvas-sepia {
+  background-color: #F3EBD8;
+  color: #352B1B;
+}
+
+.reader-canvas-night {
+  background-color: #161C13;
+  color: #D6DFCD;
+}
+
+/* Custom scrollbar for literary feel */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(221, 229, 210, 0.4);
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(104, 113, 95, 0.35);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(44, 58, 34, 0.6);
+}
