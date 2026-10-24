@@ -24,6 +24,36 @@ app.use('/uploads', express.static(UPLOADS_ROOT));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// Production & Dev CORS configuration (Supports Netlify and Render custom origins)
+const allowedOrigins = [
+  process.env.FRONTEND_ORIGIN,
+  process.env.CORS_ORIGIN,
+  'https://akhyana.netlify.app'
+].filter(Boolean) as string[];
+
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (origin) {
+    const isAllowed = !isProd ||
+      allowedOrigins.includes(origin) ||
+      origin.endsWith('.netlify.app') ||
+      origin.includes('localhost') ||
+      origin.includes('127.0.0.1');
+
+    if (isAllowed) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Access-Control-Allow-Credentials', 'true');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    }
+  }
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(204);
+    return;
+  }
+  next();
+});
+
 // In-memory active session store (backed by secure tokens)
 interface ActiveSession {
   token: string;
@@ -220,6 +250,15 @@ app.post('/api/admin/users', authenticate, authorizeRoles('owner'), (req, res) =
     name: newAdmin.name,
     role: newAdmin.role
   });
+});
+
+app.delete('/api/admin/users/:id', authenticate, authorizeRoles('owner'), (req, res) => {
+  const deleted = db.deleteAdmin(req.params.id);
+  if (!deleted) {
+    res.status(400).json({ error: 'Cannot delete primary owner or staff member not found' });
+    return;
+  }
+  res.json({ success: true, message: 'Staff member account removed successfully' });
 });
 
 // Admin stats

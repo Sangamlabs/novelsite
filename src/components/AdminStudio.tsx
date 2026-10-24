@@ -36,6 +36,18 @@ interface AdminStudioProps {
   onReturnToSite: () => void;
   onDataChanged?: () => void;
   onNovelSaved?: (novel: Novel) => void;
+  onOpenNovel?: (slug: string) => void;
+  onOpenChapter?: (novelSlug: string, chapterSlug: string) => void;
+}
+
+interface ConfirmModalState {
+  isOpen: boolean;
+  title: string;
+  message: string;
+  confirmText: string;
+  isDestructive?: boolean;
+  isProcessing: boolean;
+  onConfirm: () => Promise<void>;
 }
 
 type AdminTab = 'dashboard' | 'novels' | 'chapters' | 'media' | 'discussions' | 'announcements' | 'admins' | 'settings';
@@ -45,7 +57,9 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   onLogout,
   onReturnToSite,
   onDataChanged,
-  onNovelSaved
+  onNovelSaved,
+  onOpenNovel,
+  onOpenChapter
 }) => {
   const [activeTab, setActiveTab] = useState<AdminTab>('dashboard');
   const [stats, setStats] = useState<AdminStats | null>(null);
@@ -56,22 +70,30 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   const [admins, setAdmins] = useState<AdminUser[]>([]);
   const [settings, setSettings] = useState<SiteSettings | null>(null);
   const [loading, setLoading] = useState(false);
-  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+  const [notification, setNotification] = useState<{ type: 'success' | 'error'; message: string; actionLabel?: string; onAction?: () => void } | null>(null);
+
+  // In-app confirmation dialog state (replaces window.confirm)
+  const [confirmModal, setConfirmModal] = useState<ConfirmModalState | null>(null);
 
   // Novel Form State
   const [editingNovel, setEditingNovel] = useState<Partial<Novel> | null>(null);
+  const [originalNovelSlug, setOriginalNovelSlug] = useState<string | null>(null);
+  const [isSavingNovel, setIsSavingNovel] = useState(false);
 
   // Chapter Form State
   const [editingChapter, setEditingChapter] = useState<Partial<Chapter> | null>(null);
+  const [isSavingChapter, setIsSavingChapter] = useState(false);
 
   // Announcement Form State
   const [editingAnnouncement, setEditingAnnouncement] = useState<Partial<Announcement> | null>(null);
+  const [isSavingAnnouncement, setIsSavingAnnouncement] = useState(false);
 
   // Admin creation state
   const [newAdminEmail, setNewAdminEmail] = useState('');
   const [newAdminName, setNewAdminName] = useState('');
   const [newAdminRole, setNewAdminRole] = useState<'admin' | 'editor' | 'moderator'>('editor');
   const [newAdminPassword, setNewAdminPassword] = useState('');
+
 
   // Curated cover library for instant selection
   const curatedCovers = [
@@ -85,9 +107,9 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     loadAllData();
   }, []);
 
-  const showNotification = (type: 'success' | 'error', message: string) => {
-    setNotification({ type, message });
-    setTimeout(() => setNotification(null), 4000);
+  const showNotification = (type: 'success' | 'error', message: string, actionLabel?: string, onAction?: () => void) => {
+    setNotification({ type, message, actionLabel, onAction });
+    setTimeout(() => setNotification(null), 5000);
   };
 
   const loadAllData = async () => {
@@ -123,32 +145,53 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
   /* ================= Novel Actions ================= */
   const handleSaveNovel = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!editingNovel?.title || !editingNovel?.slug) {
-      showNotification('error', 'Title and slug are required');
+    if (!editingNovel?.title?.trim() || !editingNovel?.slug?.trim()) {
+      showNotification('error', 'Title and unique slug are required');
       return;
     }
     try {
-      const saved = await api.saveNovel(editingNovel);
-      showNotification('success', 'Novel saved successfully');
+      setIsSavingNovel(true);
+      const saved = await api.saveNovel(editingNovel, originalNovelSlug || undefined);
+      showNotification(
+        'success',
+        `Novel "${saved.title}" saved successfully!`,
+        'View Novel ↗',
+        () => onOpenNovel && onOpenNovel(saved.slug)
+      );
       setEditingNovel(null);
+      setOriginalNovelSlug(null);
       await loadAllData();
       if (onNovelSaved) onNovelSaved(saved);
       if (onDataChanged) onDataChanged();
     } catch (err: any) {
       showNotification('error', err.message || 'Failed to save novel');
+    } finally {
+      setIsSavingNovel(false);
     }
   };
 
-  const handleDeleteNovel = async (slug: string) => {
-    if (!window.confirm('Are you certain you wish to delete this novel and its chapters?')) return;
-    try {
-      await api.deleteNovel(slug);
-      showNotification('success', 'Novel deleted');
-      await loadAllData();
-      if (onDataChanged) onDataChanged();
-    } catch (err: any) {
-      showNotification('error', err.message || 'Failed to delete');
-    }
+  const confirmDeleteNovel = (novel: Novel) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Novel Serial',
+      message: `Are you certain you wish to permanently delete "${novel.title}"? All associated chapters, discussion comments, and reader history will be permanently deleted. This cannot be undone.`,
+      confirmText: 'Delete Permanently',
+      isDestructive: true,
+      isProcessing: false,
+      onConfirm: async () => {
+        setConfirmModal(prev => prev ? { ...prev, isProcessing: true } : null);
+        try {
+          await api.deleteNovel(novel.slug);
+          showNotification('success', `"${novel.title}" and its chapters were successfully deleted`);
+          setConfirmModal(null);
+          await loadAllData();
+          if (onDataChanged) onDataChanged();
+        } catch (err: any) {
+          showNotification('error', err.message || 'Failed to delete novel');
+          setConfirmModal(null);
+        }
+      }
+    });
   };
 
   /* ================= Chapter Actions ================= */
@@ -159,27 +202,48 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
       return;
     }
     try {
-      await api.saveChapter(editingChapter);
-      showNotification('success', 'Chapter saved successfully');
+      setIsSavingChapter(true);
+      const saved = await api.saveChapter(editingChapter);
+      showNotification(
+        'success',
+        `Chapter ${saved.chapter_number} saved successfully!`,
+        'Read Chapter ↗',
+        () => onOpenChapter && onOpenChapter(saved.novel_slug, saved.slug)
+      );
       setEditingChapter(null);
       await loadAllData();
       if (onDataChanged) onDataChanged();
     } catch (err: any) {
       showNotification('error', err.message || 'Failed to save chapter');
+    } finally {
+      setIsSavingChapter(false);
     }
   };
 
-  const handleDeleteChapter = async (id: string) => {
-    if (!window.confirm('Are you certain you wish to delete this chapter?')) return;
-    try {
-      await api.deleteChapter(id);
-      showNotification('success', 'Chapter removed');
-      await loadAllData();
-      if (onDataChanged) onDataChanged();
-    } catch (err: any) {
-      showNotification('error', err.message || 'Failed to delete chapter');
-    }
+  const confirmDeleteChapter = (ch: Chapter) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Chapter Manuscript',
+      message: `Are you certain you wish to delete Chapter ${ch.chapter_number}: "${ch.title}"?`,
+      confirmText: 'Delete Chapter',
+      isDestructive: true,
+      isProcessing: false,
+      onConfirm: async () => {
+        setConfirmModal(prev => prev ? { ...prev, isProcessing: true } : null);
+        try {
+          await api.deleteChapter(ch.id);
+          showNotification('success', `Chapter ${ch.chapter_number} removed`);
+          setConfirmModal(null);
+          await loadAllData();
+          if (onDataChanged) onDataChanged();
+        } catch (err: any) {
+          showNotification('error', err.message || 'Failed to delete chapter');
+          setConfirmModal(null);
+        }
+      }
+    });
   };
+
 
   /* ================= Comment Actions ================= */
   const handleUpdateComment = async (id: string, status: 'approved' | 'hidden') => {
@@ -192,15 +256,27 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
     }
   };
 
-  const handleDeleteComment = async (id: string) => {
-    if (!window.confirm('Delete this comment permanently?')) return;
-    try {
-      await api.deleteComment(id);
-      showNotification('success', 'Comment deleted');
-      loadAllData();
-    } catch (err: any) {
-      showNotification('error', 'Failed to delete comment');
-    }
+  const confirmDeleteComment = (c: Comment) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Delete Reader Comment',
+      message: `Are you certain you wish to permanently delete the comment by "${c.author_name}" on ${c.novel_slug}?`,
+      confirmText: 'Delete Comment',
+      isDestructive: true,
+      isProcessing: false,
+      onConfirm: async () => {
+        setConfirmModal(prev => prev ? { ...prev, isProcessing: true } : null);
+        try {
+          await api.deleteComment(c.id);
+          showNotification('success', 'Comment deleted successfully');
+          setConfirmModal(null);
+          loadAllData();
+        } catch (err: any) {
+          showNotification('error', err.message || 'Failed to delete comment');
+          setConfirmModal(null);
+        }
+      }
+    });
   };
 
   /* ================= Announcement Actions ================= */
@@ -211,24 +287,39 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
       return;
     }
     try {
+      setIsSavingAnnouncement(true);
       await api.saveAnnouncement(editingAnnouncement);
-      showNotification('success', 'Announcement saved');
+      showNotification('success', 'Announcement saved and published');
       setEditingAnnouncement(null);
       loadAllData();
     } catch (err: any) {
       showNotification('error', err.message || 'Failed to save announcement');
+    } finally {
+      setIsSavingAnnouncement(false);
     }
   };
 
-  const handleDeleteAnnouncement = async (id: string) => {
-    if (!window.confirm('Delete this announcement?')) return;
-    try {
-      await api.deleteAnnouncement(id);
-      showNotification('success', 'Announcement removed');
-      loadAllData();
-    } catch (err: any) {
-      showNotification('error', 'Failed to delete announcement');
-    }
+  const confirmDeleteAnnouncement = (a: Announcement) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Remove Broadcast Announcement',
+      message: `Are you certain you wish to delete the announcement "${a.title}"?`,
+      confirmText: 'Remove Notice',
+      isDestructive: true,
+      isProcessing: false,
+      onConfirm: async () => {
+        setConfirmModal(prev => prev ? { ...prev, isProcessing: true } : null);
+        try {
+          await api.deleteAnnouncement(a.id);
+          showNotification('success', 'Announcement removed');
+          setConfirmModal(null);
+          loadAllData();
+        } catch (err: any) {
+          showNotification('error', err.message || 'Failed to delete announcement');
+          setConfirmModal(null);
+        }
+      }
+    });
   };
 
   /* ================= Site Settings Actions ================= */
@@ -266,6 +357,30 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
       showNotification('error', err.message || 'Failed to create admin');
     }
   };
+
+  const confirmDeleteAdmin = (a: AdminUser) => {
+    setConfirmModal({
+      isOpen: true,
+      title: 'Revoke Staff Access',
+      message: `Are you certain you wish to revoke author studio access for "${a.name}" (${a.email})?`,
+      confirmText: 'Revoke Access',
+      isDestructive: true,
+      isProcessing: false,
+      onConfirm: async () => {
+        setConfirmModal(prev => prev ? { ...prev, isProcessing: true } : null);
+        try {
+          await api.deleteAdminUser(a.id);
+          showNotification('success', `Access revoked for ${a.name}`);
+          setConfirmModal(null);
+          loadAllData();
+        } catch (err: any) {
+          showNotification('error', err.message || 'Failed to delete staff member');
+          setConfirmModal(null);
+        }
+      }
+    });
+  };
+
 
   return (
     <div className="min-h-screen bg-[#EEF0E4] text-[#28311F] font-serif">
@@ -479,18 +594,21 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                     <p className="text-xs text-[#68715F]">Manage metadata, synopsis, translations, and publishing status</p>
                   </div>
                   <button
-                    onClick={() => setEditingNovel({
-                      title: '',
-                      slug: '',
-                      synopsis: '',
-                      author: currentUser?.name || 'Author',
-                      cover_url: curatedCovers[0].url,
-                      genres: ['Botanical Fantasy'],
-                      status: 'ongoing',
-                      available_languages: ['en'],
-                      is_featured: false
-                    })}
-                    className="px-4 py-2.5 bg-[#2C3A22] text-[#EEF0E4] rounded-xl text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer"
+                    onClick={() => {
+                      setEditingNovel({
+                        title: '',
+                        slug: '',
+                        synopsis: '',
+                        author: currentUser?.name || 'Author',
+                        cover_url: curatedCovers[0].url,
+                        genres: ['Botanical Fantasy'],
+                        status: 'ongoing',
+                        available_languages: ['en'],
+                        is_featured: false
+                      });
+                      setOriginalNovelSlug(null);
+                    }}
+                    className="px-4 py-2.5 bg-[#2C3A22] text-[#EEF0E4] rounded-xl text-xs uppercase tracking-wider flex items-center gap-2 cursor-pointer shadow-xs hover:bg-[#1D2716] transition-colors"
                   >
                     <Plus className="w-4 h-4" />
                     <span>New Novel</span>
@@ -517,14 +635,27 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
 
                         <div className="flex items-center gap-3 mt-4 pt-3 border-t border-[#2C3A22]/10">
                           <button
-                            onClick={() => setEditingNovel(novel)}
+                            onClick={() => {
+                              setEditingNovel(novel);
+                              setOriginalNovelSlug(novel.slug);
+                            }}
                             className="text-xs text-[#2C3A22] hover:underline flex items-center gap-1 cursor-pointer font-medium"
                           >
                             <Edit3 className="w-3.5 h-3.5" />
                             <span>Edit</span>
                           </button>
+                          {onOpenNovel && (
+                            <button
+                              onClick={() => onOpenNovel(novel.slug)}
+                              className="text-xs text-[#B08D46] hover:underline flex items-center gap-1 cursor-pointer font-medium"
+                              title="View in public reader"
+                            >
+                              <Eye className="w-3.5 h-3.5" />
+                              <span>View Story</span>
+                            </button>
+                          )}
                           <button
-                            onClick={() => handleDeleteNovel(novel.slug)}
+                            onClick={() => confirmDeleteNovel(novel)}
                             className="text-xs text-red-700 hover:underline flex items-center gap-1 cursor-pointer ml-auto"
                           >
                             <Trash2 className="w-3.5 h-3.5" />
@@ -680,16 +811,21 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 <div className="flex justify-end gap-3">
                   <button
                     type="button"
+                    disabled={isSavingNovel}
                     onClick={() => setEditingNovel(null)}
-                    className="px-4 py-2 text-xs uppercase tracking-wider text-[#68715F]"
+                    className="px-4 py-2 text-xs uppercase tracking-wider text-[#68715F] disabled:opacity-50"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-6 py-2.5 bg-[#2C3A22] text-[#EEF0E4] rounded-xl text-xs uppercase tracking-wider font-semibold hover:bg-[#1D2716] transition-colors"
+                    disabled={isSavingNovel}
+                    className="px-6 py-2.5 bg-[#2C3A22] text-[#EEF0E4] hover:bg-[#1D2716] disabled:opacity-60 rounded-xl text-xs uppercase tracking-wider font-semibold transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
                   >
-                    Save Novel
+                    {isSavingNovel && (
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    )}
+                    <span>{isSavingNovel ? 'Saving Manuscript...' : (editingNovel.id ? 'Update Novel' : 'Publish Novel')}</span>
                   </button>
                 </div>
               </form>
@@ -752,6 +888,15 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                         </div>
 
                         <div className="flex items-center gap-2 shrink-0">
+                          {onOpenChapter && (
+                            <button
+                              onClick={() => onOpenChapter(ch.novel_slug, ch.slug)}
+                              className="p-2 text-[#B08D46] hover:bg-white/60 rounded-lg cursor-pointer"
+                              title="Read Chapter in Reader"
+                            >
+                              <Eye className="w-4 h-4" />
+                            </button>
+                          )}
                           <button
                             onClick={() => setEditingChapter(ch)}
                             className="p-2 text-[#2C3A22] hover:bg-white/60 rounded-lg cursor-pointer"
@@ -760,7 +905,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                             <Edit3 className="w-4 h-4" />
                           </button>
                           <button
-                            onClick={() => handleDeleteChapter(ch.id)}
+                            onClick={() => confirmDeleteChapter(ch)}
                             className="p-2 text-red-700 hover:bg-white/60 rounded-lg cursor-pointer"
                             title="Delete Chapter"
                           >
@@ -919,16 +1064,21 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 <div className="flex justify-end gap-3">
                   <button
                     type="button"
+                    disabled={isSavingChapter}
                     onClick={() => setEditingChapter(null)}
-                    className="px-4 py-2 text-xs uppercase tracking-wider text-[#68715F]"
+                    className="px-4 py-2 text-xs uppercase tracking-wider text-[#68715F] disabled:opacity-50"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-6 py-2.5 bg-[#2C3A22] text-[#EEF0E4] rounded-xl text-xs uppercase tracking-wider font-semibold hover:bg-[#1D2716] transition-colors"
+                    disabled={isSavingChapter}
+                    className="px-6 py-2.5 bg-[#2C3A22] text-[#EEF0E4] hover:bg-[#1D2716] disabled:opacity-60 rounded-xl text-xs uppercase tracking-wider font-semibold transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
                   >
-                    Save Chapter
+                    {isSavingChapter && (
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    )}
+                    <span>{isSavingChapter ? 'Saving Manuscript...' : (editingChapter.id ? 'Update Chapter' : 'Save Chapter')}</span>
                   </button>
                 </div>
               </form>
@@ -1018,7 +1168,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                       </button>
                     )}
                     <button
-                      onClick={() => handleDeleteComment(c.id)}
+                      onClick={() => confirmDeleteComment(c)}
                       className="text-red-700 hover:underline cursor-pointer ml-auto"
                     >
                       Delete
@@ -1072,7 +1222,7 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                           Edit
                         </button>
                         <button
-                          onClick={() => handleDeleteAnnouncement(a.id)}
+                          onClick={() => confirmDeleteAnnouncement(a)}
                           className="text-red-700 hover:underline cursor-pointer"
                         >
                           Delete
@@ -1146,16 +1296,21 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                 <div className="flex justify-end gap-3 pt-4 border-t border-[#2C3A22]/10">
                   <button
                     type="button"
+                    disabled={isSavingAnnouncement}
                     onClick={() => setEditingAnnouncement(null)}
-                    className="px-4 py-2 text-xs uppercase tracking-wider text-[#68715F]"
+                    className="px-4 py-2 text-xs uppercase tracking-wider text-[#68715F] disabled:opacity-50"
                   >
                     Cancel
                   </button>
                   <button
                     type="submit"
-                    className="px-6 py-2.5 bg-[#2C3A22] text-[#EEF0E4] rounded-xl text-xs uppercase tracking-wider font-semibold"
+                    disabled={isSavingAnnouncement}
+                    className="px-6 py-2.5 bg-[#2C3A22] text-[#EEF0E4] hover:bg-[#1D2716] disabled:opacity-60 rounded-xl text-xs uppercase tracking-wider font-semibold transition-colors flex items-center gap-2 cursor-pointer shadow-xs"
                   >
-                    Save Broadcast
+                    {isSavingAnnouncement && (
+                      <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    )}
+                    <span>{isSavingAnnouncement ? 'Saving...' : 'Save Broadcast'}</span>
                   </button>
                 </div>
               </form>
@@ -1182,6 +1337,17 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
                       </div>
                       <span className="text-xs text-[#68715F]">{a.email}</span>
                     </div>
+                    {a.role !== 'owner' && (
+                      <button
+                        type="button"
+                        onClick={() => confirmDeleteAdmin(a)}
+                        className="text-xs text-red-700 hover:underline flex items-center gap-1 cursor-pointer ml-auto"
+                        title="Revoke Staff Access"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                        <span>Revoke</span>
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -1311,6 +1477,50 @@ export const AdminStudio: React.FC<AdminStudioProps> = ({
         )}
 
       </div>
+
+      {/* In-app Confirmation Dialog (Works reliably across sandboxed iframes & production) */}
+      {confirmModal && confirmModal.isOpen && (
+        <div
+          role="dialog"
+          aria-modal="true"
+          className="fixed inset-0 z-50 bg-[#28311F]/60 backdrop-blur-xs flex items-center justify-center p-4 animate-in fade-in duration-150"
+        >
+          <div className="glass-panel bg-[#EEF0E4] border border-[#2C3A22]/20 rounded-2xl max-w-md w-full p-6 shadow-2xl">
+            <h3 className="text-xl font-medium text-[#28311F] font-serif mb-2">
+              {confirmModal.title}
+            </h3>
+            <p className="text-sm text-[#4A5540] leading-relaxed mb-6 font-serif">
+              {confirmModal.message}
+            </p>
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-[#2C3A22]/10">
+              <button
+                type="button"
+                disabled={confirmModal.isProcessing}
+                onClick={() => setConfirmModal(null)}
+                className="px-4 py-2 text-xs uppercase tracking-wider text-[#68715F] hover:text-[#28311F] disabled:opacity-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={confirmModal.isProcessing}
+                onClick={() => confirmModal.onConfirm()}
+                className={`px-5 py-2.5 rounded-xl text-xs uppercase tracking-wider font-semibold text-white transition-colors cursor-pointer flex items-center gap-2 shadow-xs ${
+                  confirmModal.isDestructive
+                    ? 'bg-red-800 hover:bg-red-900 disabled:opacity-60'
+                    : 'bg-[#2C3A22] hover:bg-[#1D2716] disabled:opacity-60'
+                }`}
+              >
+                {confirmModal.isProcessing && (
+                  <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                )}
+                <span>{confirmModal.isProcessing ? 'Processing...' : confirmModal.confirmText}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+

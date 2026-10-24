@@ -71,6 +71,7 @@ export interface Comment {
   id: string;
   novel_id: string;
   novel_slug: string;
+  chapter_slug?: string;
   author_name: string;
   content: string;
   status: 'approved' | 'pending' | 'hidden';

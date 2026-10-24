@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
+import pg from 'pg';
+const { Pool } = pg;
 
 export interface NovelTranslation {
   title: string;
@@ -73,6 +75,7 @@ export interface Comment {
   id: string;
   novel_id: string;
   novel_slug: string;
+  chapter_slug?: string;
   author_name: string;
   content: string;
   status: 'approved' | 'pending' | 'hidden';
@@ -463,11 +466,156 @@ const SEED_ADMINS: AdminUser[] = [
   }
 ];
 
+// PostgreSQL connection pool (activated when DATABASE_URL is configured)
+const pgPool = process.env.DATABASE_URL
+  ? new Pool({
+      connectionString: process.env.DATABASE_URL,
+      ssl: process.env.DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false }
+    })
+  : null;
+
 class DatabaseManager {
   private state: DatabaseState;
+  private pgInitialized: boolean = false;
 
   constructor() {
     this.state = this.loadInitial();
+    this.initPostgreSQLSync();
+  }
+
+  private async initPostgreSQLSync() {
+    if (!pgPool) return;
+    try {
+      // Test connectivity and load persisted records if available
+      const testRes = await pgPool.query('SELECT 1 FROM novels LIMIT 1').catch(() => null);
+      if (testRes) {
+        console.log('[PostgreSQL] Connection established. Hydrating active state from PostgreSQL...');
+        const [novelsRes, chaptersRes, announcementsRes, commentsRes, adminsRes] = await Promise.all([
+          pgPool.query('SELECT * FROM novels ORDER BY created_at DESC'),
+          pgPool.query('SELECT * FROM chapters ORDER BY chapter_number ASC'),
+          pgPool.query('SELECT * FROM announcements ORDER BY created_at DESC'),
+          pgPool.query('SELECT * FROM comments ORDER BY created_at DESC'),
+          pgPool.query('SELECT * FROM admin_users ORDER BY created_at ASC')
+        ]);
+
+        if (novelsRes.rows.length > 0) {
+          this.state.novels = novelsRes.rows.map(r => ({
+            id: r.id,
+            slug: r.slug,
+            title: r.title,
+            synopsis: r.synopsis,
+            author: r.author,
+            cover_url: r.cover_url,
+            genres: r.genres || [],
+            status: r.status,
+            available_languages: r.available_languages || ['en'],
+            is_featured: !!r.is_featured,
+            translations: typeof r.translations === 'string' ? JSON.parse(r.translations) : (r.translations || {}),
+            created_at: r.created_at,
+            updated_at: r.updated_at
+          }));
+        }
+
+        if (chaptersRes.rows.length > 0) {
+          this.state.chapters = chaptersRes.rows.map(r => ({
+            id: r.id,
+            novel_id: r.novel_id,
+            novel_slug: r.novel_slug,
+            chapter_number: r.chapter_number,
+            order_index: r.order_index,
+            title: r.title,
+            slug: r.slug,
+            body: r.body,
+            language: r.language,
+            status: r.status,
+            cover_url: r.cover_url || null,
+            published_at: r.published_at,
+            created_at: r.created_at,
+            word_count: r.word_count || 0,
+            translations: typeof r.translations === 'string' ? JSON.parse(r.translations) : (r.translations || {})
+          }));
+        }
+
+        if (announcementsRes.rows.length > 0) {
+          this.state.announcements = announcementsRes.rows.map(r => ({
+            id: r.id,
+            title: r.title,
+            message: r.message,
+            type: r.type,
+            action_label: r.action_label,
+            action_url: r.action_url,
+            image_url: r.image_url,
+            status: r.status,
+            created_at: r.created_at,
+            expires_at: r.expires_at
+          }));
+        }
+
+        if (commentsRes.rows.length > 0) {
+          this.state.comments = commentsRes.rows.map(r => ({
+            id: r.id,
+            novel_id: r.novel_id,
+            novel_slug: r.novel_slug,
+            author_name: r.author_name,
+            content: r.content,
+            status: r.status,
+            created_at: r.created_at
+          }));
+        }
+
+        if (adminsRes.rows.length > 0) {
+          this.state.admins = adminsRes.rows.map(r => ({
+            id: r.id,
+            email: r.email,
+            name: r.name,
+            role: r.role,
+            password_hash: r.password_hash,
+            created_at: r.created_at
+          }));
+        }
+        this.persist(this.state);
+        console.log('[PostgreSQL] State hydrated successfully from PostgreSQL.');
+      } else {
+        // If table doesn't have data, seed current state into PostgreSQL
+        console.log('[PostgreSQL] Connected. Database tables empty; seeding initial records...');
+        await this.syncAllToPostgreSQL();
+      }
+      this.pgInitialized = true;
+    } catch (err: any) {
+      console.warn('[PostgreSQL] Hydration notice (continuing with persistent local store):', err.message);
+    }
+  }
+
+  private async syncAllToPostgreSQL() {
+    if (!pgPool) return;
+    try {
+      for (const n of this.state.novels) {
+        await pgPool.query(
+          `INSERT INTO novels (id, slug, title, synopsis, author, cover_url, genres, status, available_languages, is_featured, translations, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+           ON CONFLICT (id) DO UPDATE SET slug = EXCLUDED.slug, title = EXCLUDED.title, synopsis = EXCLUDED.synopsis, updated_at = EXCLUDED.updated_at`,
+          [n.id, n.slug, n.title, n.synopsis, n.author, n.cover_url, n.genres, n.status, n.available_languages, n.is_featured, JSON.stringify(n.translations || {}), n.created_at, n.updated_at]
+        );
+      }
+      for (const a of this.state.admins) {
+        await pgPool.query(
+          `INSERT INTO admin_users (id, email, name, role, password_hash, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (id) DO NOTHING`,
+          [a.id, a.email, a.name, a.role, a.password_hash, a.created_at]
+        );
+      }
+      for (const c of this.state.chapters) {
+        await pgPool.query(
+          `INSERT INTO chapters (id, novel_id, novel_slug, chapter_number, order_index, title, slug, body, language, status, word_count, published_at, translations, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+           ON CONFLICT (id) DO NOTHING`,
+          [c.id, c.novel_id, c.novel_slug, c.chapter_number, c.order_index, c.title, c.slug, c.body, c.language, c.status, c.word_count, c.published_at, JSON.stringify(c.translations || {}), c.created_at]
+        );
+      }
+    } catch (err: any) {
+      console.warn('[PostgreSQL] Initial sync notice:', err.message);
+    }
   }
 
   private loadInitial(): DatabaseState {
@@ -478,9 +626,8 @@ class DatabaseManager {
       if (fs.existsSync(DB_FILE)) {
         const raw = fs.readFileSync(DB_FILE, 'utf-8');
         const parsed = JSON.parse(raw);
-        // Ensure defaults if missing keys
         return {
-          novels: parsed.novels || SEED_NOVELS,
+          novels: (parsed.novels || SEED_NOVELS).filter((n: any) => n && n.id && n.slug),
           chapters: parsed.chapters || SEED_CHAPTERS,
           announcements: parsed.announcements || SEED_ANNOUNCEMENTS,
           reading_progress: parsed.reading_progress || [],
@@ -522,32 +669,145 @@ class DatabaseManager {
   }
 
   public getNovelBySlug(slug: string): Novel | undefined {
-    return this.state.novels.find(n => n.slug === slug || n.id === slug);
+    if (!slug) return undefined;
+    const clean = decodeURIComponent(slug).trim().toLowerCase();
+    return this.state.novels.find(n =>
+      (n.slug && n.slug.toLowerCase() === clean) ||
+      (n.id && n.id.toLowerCase() === clean)
+    );
   }
 
-  public saveNovel(novel: Novel): Novel {
-    const existingIndex = this.state.novels.findIndex(n => n.id === novel.id || n.slug === novel.slug);
+  public getNovelById(id: string): Novel | undefined {
+    if (!id) return undefined;
+    return this.state.novels.find(n => n.id === id);
+  }
+
+  public saveNovel(novel: Partial<Novel> & { title: string; slug: string }, originalSlugOrId?: string): Novel {
+    const cleanSlug = novel.slug.trim().toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '');
+    let existingIndex = -1;
+
+    if (originalSlugOrId) {
+      const targetOriginal = decodeURIComponent(originalSlugOrId).trim().toLowerCase();
+      existingIndex = this.state.novels.findIndex(
+        n => n.slug.toLowerCase() === targetOriginal || n.id.toLowerCase() === targetOriginal
+      );
+    }
+    if (existingIndex < 0 && novel.id) {
+      existingIndex = this.state.novels.findIndex(n => n.id === novel.id);
+    }
+    if (existingIndex < 0 && cleanSlug) {
+      existingIndex = this.state.novels.findIndex(n => n.slug.toLowerCase() === cleanSlug);
+    }
+
+    let savedNovel: Novel;
     if (existingIndex >= 0) {
-      this.state.novels[existingIndex] = { ...this.state.novels[existingIndex], ...novel, updated_at: new Date().toISOString() };
+      const prev = this.state.novels[existingIndex];
+      const prevSlug = prev.slug;
+      savedNovel = {
+        ...prev,
+        ...novel,
+        id: prev.id, // Preserve immutable ID
+        slug: cleanSlug || prev.slug,
+        title: (novel.title || prev.title).trim(),
+        updated_at: new Date().toISOString()
+      };
+      this.state.novels[existingIndex] = savedNovel;
+
+      // Cascade novel_slug updates to associated chapters
+      if (prevSlug && prevSlug !== savedNovel.slug) {
+        for (const ch of this.state.chapters) {
+          if (ch.novel_slug === prevSlug || ch.novel_id === prev.id) {
+            ch.novel_slug = savedNovel.slug;
+          }
+        }
+      }
     } else {
-      this.state.novels.unshift(novel);
+      const newId = novel.id || ('nov-' + Date.now());
+      savedNovel = {
+        id: newId,
+        slug: cleanSlug,
+        title: novel.title.trim(),
+        synopsis: novel.synopsis || '',
+        author: novel.author || 'Akhyana Staff',
+        cover_url: novel.cover_url || '/src/assets/images/novel_cover_whispering_canopy_1792815709554.jpg',
+        genres: novel.genres || ['Literary Fiction'],
+        status: novel.status || 'ongoing',
+        available_languages: novel.available_languages || ['en'],
+        is_featured: !!novel.is_featured,
+        created_at: novel.created_at || new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        translations: novel.translations || {}
+      };
+      this.state.novels.unshift(savedNovel);
     }
     this.persist(this.state);
-    return novel;
+
+    if (pgPool) {
+      pgPool.query(
+        `INSERT INTO novels (id, slug, title, synopsis, author, cover_url, genres, status, available_languages, is_featured, translations, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+         ON CONFLICT (id) DO UPDATE SET
+           slug = EXCLUDED.slug,
+           title = EXCLUDED.title,
+           synopsis = EXCLUDED.synopsis,
+           author = EXCLUDED.author,
+           cover_url = EXCLUDED.cover_url,
+           genres = EXCLUDED.genres,
+           status = EXCLUDED.status,
+           available_languages = EXCLUDED.available_languages,
+           is_featured = EXCLUDED.is_featured,
+           translations = EXCLUDED.translations,
+           updated_at = EXCLUDED.updated_at`,
+        [
+          savedNovel.id,
+          savedNovel.slug,
+          savedNovel.title,
+          savedNovel.synopsis,
+          savedNovel.author,
+          savedNovel.cover_url,
+          savedNovel.genres,
+          savedNovel.status,
+          savedNovel.available_languages,
+          savedNovel.is_featured,
+          JSON.stringify(savedNovel.translations || {}),
+          savedNovel.created_at,
+          savedNovel.updated_at
+        ]
+      ).catch(err => console.error('[PostgreSQL] saveNovel error:', err.message));
+    }
+
+    return savedNovel;
   }
 
-  public deleteNovel(id: string): boolean {
+  public deleteNovel(idOrSlug: string): boolean {
+    const target = this.getNovelBySlug(idOrSlug) || this.getNovelById(idOrSlug);
+    if (!target) return false;
+    const { id, slug } = target;
+
     const prevLen = this.state.novels.length;
-    this.state.novels = this.state.novels.filter(n => n.id !== id && n.slug !== id);
-    this.state.chapters = this.state.chapters.filter(c => c.novel_id !== id && c.novel_slug !== id);
+    this.state.novels = this.state.novels.filter(n => n.id !== id && n.slug !== slug);
+    // Cascade delete chapters, comments, and reading progress
+    this.state.chapters = this.state.chapters.filter(c => c.novel_id !== id && c.novel_slug !== slug);
+    this.state.comments = this.state.comments.filter(c => c.novel_id !== id && c.novel_slug !== slug);
+    this.state.reading_progress = this.state.reading_progress.filter(r => r.novel_id !== id && r.novel_slug !== slug);
     this.persist(this.state);
+
+    if (pgPool) {
+      pgPool.query('DELETE FROM novels WHERE id = $1 OR slug = $2', [id, slug])
+        .catch(err => console.error('[PostgreSQL] deleteNovel error:', err.message));
+    }
+
     return this.state.novels.length < prevLen;
   }
 
   public getChapters(novelSlugOrId?: string, includeDrafts: boolean = false): Chapter[] {
     let list = this.state.chapters;
     if (novelSlugOrId) {
-      list = list.filter(c => c.novel_slug === novelSlugOrId || c.novel_id === novelSlugOrId);
+      const clean = decodeURIComponent(novelSlugOrId).trim().toLowerCase();
+      list = list.filter(c =>
+        (c.novel_slug && c.novel_slug.toLowerCase() === clean) ||
+        (c.novel_id && c.novel_id.toLowerCase() === clean)
+      );
     }
     if (!includeDrafts) {
       list = list.filter(c => c.status === 'published');
@@ -556,30 +816,122 @@ class DatabaseManager {
   }
 
   public getChapter(identifier: string, novelSlug?: string): Chapter | undefined {
+    if (!identifier) return undefined;
+    const cleanId = decodeURIComponent(identifier).trim().toLowerCase();
+    const cleanNovel = novelSlug ? decodeURIComponent(novelSlug).trim().toLowerCase() : undefined;
+
     return this.state.chapters.find(c => {
-      const idMatch = c.id === identifier || c.slug === identifier;
-      if (novelSlug) {
-        return idMatch && (c.novel_slug === novelSlug || c.novel_id === novelSlug);
+      const idMatch = (c.id && c.id.toLowerCase() === cleanId) || (c.slug && c.slug.toLowerCase() === cleanId);
+      if (cleanNovel) {
+        return idMatch && ((c.novel_slug && c.novel_slug.toLowerCase() === cleanNovel) || (c.novel_id && c.novel_id.toLowerCase() === cleanNovel));
       }
       return idMatch;
     });
   }
 
-  public saveChapter(chapter: Chapter): Chapter {
-    const existingIndex = this.state.chapters.findIndex(c => c.id === chapter.id);
+  public saveChapter(chapter: Partial<Chapter> & { novel_slug: string; title: string }): Chapter {
+    const cleanSlug = (chapter.slug || chapter.title.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '')).trim();
+    const novel = this.getNovelBySlug(chapter.novel_slug);
+    const novelId = chapter.novel_id || novel?.id || ('nov-ref-' + chapter.novel_slug);
+
+    let existingIndex = -1;
+    if (chapter.id) {
+      existingIndex = this.state.chapters.findIndex(c => c.id === chapter.id);
+    }
+    if (existingIndex < 0 && cleanSlug) {
+      existingIndex = this.state.chapters.findIndex(c =>
+        (c.novel_slug.toLowerCase() === chapter.novel_slug.toLowerCase() || c.novel_id === novelId) &&
+        c.slug.toLowerCase() === cleanSlug.toLowerCase()
+      );
+    }
+
+    let savedChapter: Chapter;
     if (existingIndex >= 0) {
-      this.state.chapters[existingIndex] = { ...this.state.chapters[existingIndex], ...chapter };
+      const prev = this.state.chapters[existingIndex];
+      savedChapter = {
+        ...prev,
+        ...chapter,
+        id: prev.id,
+        novel_id: novelId,
+        novel_slug: chapter.novel_slug || prev.novel_slug,
+        title: chapter.title.trim(),
+        slug: cleanSlug || prev.slug,
+        body: chapter.body !== undefined ? chapter.body : prev.body,
+        word_count: chapter.body !== undefined ? chapter.body.trim().split(/\s+/).filter(Boolean).length : prev.word_count
+      };
+      this.state.chapters[existingIndex] = savedChapter;
     } else {
-      this.state.chapters.push(chapter);
+      const newId = chapter.id || ('ch-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5));
+      const wordCount = chapter.body ? chapter.body.trim().split(/\s+/).filter(Boolean).length : 0;
+      savedChapter = {
+        id: newId,
+        novel_id: novelId,
+        novel_slug: chapter.novel_slug,
+        chapter_number: chapter.chapter_number ?? (this.state.chapters.filter(c => c.novel_slug === chapter.novel_slug).length + 1),
+        order_index: chapter.order_index ?? (chapter.chapter_number ?? 1),
+        title: chapter.title.trim(),
+        slug: cleanSlug,
+        body: chapter.body || '',
+        language: chapter.language || 'en',
+        status: chapter.status || 'draft',
+        cover_url: chapter.cover_url || null,
+        published_at: chapter.status === 'published' ? (chapter.published_at || new Date().toISOString()) : null,
+        created_at: chapter.created_at || new Date().toISOString(),
+        word_count: wordCount,
+        translations: chapter.translations || {}
+      };
+      this.state.chapters.push(savedChapter);
     }
     this.persist(this.state);
-    return chapter;
+
+    if (pgPool) {
+      pgPool.query(
+        `INSERT INTO chapters (id, novel_id, novel_slug, chapter_number, order_index, title, slug, body, language, status, word_count, published_at, translations, created_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+         ON CONFLICT (id) DO UPDATE SET
+           novel_slug = EXCLUDED.novel_slug,
+           chapter_number = EXCLUDED.chapter_number,
+           order_index = EXCLUDED.order_index,
+           title = EXCLUDED.title,
+           slug = EXCLUDED.slug,
+           body = EXCLUDED.body,
+           language = EXCLUDED.language,
+           status = EXCLUDED.status,
+           word_count = EXCLUDED.word_count,
+           published_at = EXCLUDED.published_at,
+           translations = EXCLUDED.translations`,
+        [
+          savedChapter.id,
+          savedChapter.novel_id,
+          savedChapter.novel_slug,
+          savedChapter.chapter_number,
+          savedChapter.order_index,
+          savedChapter.title,
+          savedChapter.slug,
+          savedChapter.body,
+          savedChapter.language,
+          savedChapter.status,
+          savedChapter.word_count,
+          savedChapter.published_at,
+          JSON.stringify(savedChapter.translations || {}),
+          savedChapter.created_at
+        ]
+      ).catch(err => console.error('[PostgreSQL] saveChapter error:', err.message));
+    }
+
+    return savedChapter;
   }
 
   public deleteChapter(id: string): boolean {
     const prevLen = this.state.chapters.length;
     this.state.chapters = this.state.chapters.filter(c => c.id !== id && c.slug !== id);
     this.persist(this.state);
+
+    if (pgPool) {
+      pgPool.query('DELETE FROM chapters WHERE id = $1 OR slug = $1', [id])
+        .catch(err => console.error('[PostgreSQL] deleteChapter error:', err.message));
+    }
+
     return this.state.chapters.length < prevLen;
   }
 
@@ -593,21 +945,70 @@ class DatabaseManager {
     });
   }
 
-  public saveAnnouncement(announcement: Announcement): Announcement {
-    const idx = this.state.announcements.findIndex(a => a.id === announcement.id);
+  public saveAnnouncement(announcement: Partial<Announcement> & { title: string; message: string }): Announcement {
+    const newId = announcement.id || ('ann-' + Date.now());
+    const savedAnnouncement: Announcement = {
+      id: newId,
+      title: announcement.title.trim(),
+      message: announcement.message.trim(),
+      type: announcement.type || 'general',
+      action_label: announcement.action_label || null,
+      action_url: announcement.action_url || null,
+      image_url: announcement.image_url || null,
+      status: announcement.status || 'published',
+      created_at: announcement.created_at || new Date().toISOString(),
+      expires_at: announcement.expires_at || null
+    };
+
+    const idx = this.state.announcements.findIndex(a => a.id === savedAnnouncement.id);
     if (idx >= 0) {
-      this.state.announcements[idx] = announcement;
+      this.state.announcements[idx] = savedAnnouncement;
     } else {
-      this.state.announcements.unshift(announcement);
+      this.state.announcements.unshift(savedAnnouncement);
     }
     this.persist(this.state);
-    return announcement;
+
+    if (pgPool) {
+      pgPool.query(
+        `INSERT INTO announcements (id, title, message, type, action_label, action_url, image_url, status, created_at, expires_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         ON CONFLICT (id) DO UPDATE SET
+           title = EXCLUDED.title,
+           message = EXCLUDED.message,
+           type = EXCLUDED.type,
+           action_label = EXCLUDED.action_label,
+           action_url = EXCLUDED.action_url,
+           image_url = EXCLUDED.image_url,
+           status = EXCLUDED.status,
+           expires_at = EXCLUDED.expires_at`,
+        [
+          savedAnnouncement.id,
+          savedAnnouncement.title,
+          savedAnnouncement.message,
+          savedAnnouncement.type,
+          savedAnnouncement.action_label,
+          savedAnnouncement.action_url,
+          savedAnnouncement.image_url,
+          savedAnnouncement.status,
+          savedAnnouncement.created_at,
+          savedAnnouncement.expires_at
+        ]
+      ).catch(err => console.error('[PostgreSQL] saveAnnouncement error:', err.message));
+    }
+
+    return savedAnnouncement;
   }
 
   public deleteAnnouncement(id: string): boolean {
     const prevLen = this.state.announcements.length;
     this.state.announcements = this.state.announcements.filter(a => a.id !== id);
     this.persist(this.state);
+
+    if (pgPool) {
+      pgPool.query('DELETE FROM announcements WHERE id = $1', [id])
+        .catch(err => console.error('[PostgreSQL] deleteAnnouncement error:', err.message));
+    }
+
     return this.state.announcements.length < prevLen;
   }
 
@@ -625,6 +1026,21 @@ class DatabaseManager {
       this.state.reading_progress.unshift(rp);
     }
     this.persist(this.state);
+
+    if (pgPool) {
+      pgPool.query(
+        `INSERT INTO reading_progress (reader_id, novel_id, novel_slug, last_chapter_id, last_chapter_number, progress_percent, last_read_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         ON CONFLICT (reader_id, novel_id) DO UPDATE SET
+           novel_slug = EXCLUDED.novel_slug,
+           last_chapter_id = EXCLUDED.last_chapter_id,
+           last_chapter_number = EXCLUDED.last_chapter_number,
+           progress_percent = EXCLUDED.progress_percent,
+           last_read_at = EXCLUDED.last_read_at`,
+        [rp.reader_id, rp.novel_id, rp.novel_slug, rp.last_chapter_id, rp.last_chapter_number, rp.progress_percent, rp.last_read_at]
+      ).catch(err => console.error('[PostgreSQL] saveReadingProgress error:', err.message));
+    }
+
     return rp;
   }
 
@@ -654,17 +1070,51 @@ class DatabaseManager {
   }
 
   public getComments(novelSlug: string): Comment[] {
-    return this.state.comments.filter(c => c.novel_slug === novelSlug && c.status === 'approved');
+    const clean = decodeURIComponent(novelSlug).trim().toLowerCase();
+    return this.state.comments.filter(c =>
+      c.novel_slug.toLowerCase() === clean && c.status === 'approved'
+    );
   }
 
   public getAllComments(): Comment[] {
     return this.state.comments;
   }
 
-  public addComment(comment: Comment): Comment {
-    this.state.comments.unshift(comment);
+  public addComment(comment: Partial<Comment> & { novel_slug: string; author_name: string; content: string }): Comment {
+    const novel = this.getNovelBySlug(comment.novel_slug);
+    const savedComment: Comment = {
+      id: comment.id || ('com-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5)),
+      novel_id: comment.novel_id || novel?.id || ('nov-ref-' + comment.novel_slug),
+      novel_slug: comment.novel_slug,
+      chapter_slug: comment.chapter_slug,
+      author_name: comment.author_name.trim(),
+      content: comment.content.trim(),
+      status: comment.status || 'pending',
+      created_at: comment.created_at || new Date().toISOString()
+    };
+
+    this.state.comments.unshift(savedComment);
     this.persist(this.state);
-    return comment;
+
+    if (pgPool) {
+      pgPool.query(
+        `INSERT INTO comments (id, novel_id, novel_slug, author_name, content, status, created_at, display_name, body, language)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $4, $5, $8)`,
+        [savedComment.id, savedComment.novel_id, savedComment.novel_slug, savedComment.author_name, savedComment.content, savedComment.status, savedComment.created_at, 'en']
+      ).catch(() => {
+        pgPool?.query(
+          `INSERT INTO comments (id, novel_id, novel_slug, author_name, content, status, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [savedComment.id, savedComment.novel_id, savedComment.novel_slug, savedComment.author_name, savedComment.content, savedComment.status, savedComment.created_at]
+        ).catch(err => console.error('[PostgreSQL] addComment error:', err.message));
+      });
+    }
+
+    return savedComment;
+  }
+
+  public saveComment(comment: Partial<Comment> & { novel_slug: string; author_name: string; content: string }): Comment {
+    return this.addComment(comment);
   }
 
   public updateCommentStatus(id: string, status: 'approved' | 'hidden'): boolean {
@@ -672,6 +1122,11 @@ class DatabaseManager {
     if (c) {
       c.status = status;
       this.persist(this.state);
+
+      if (pgPool) {
+        pgPool.query('UPDATE comments SET status = $1 WHERE id = $2', [status, id])
+          .catch(err => console.error('[PostgreSQL] updateCommentStatus error:', err.message));
+      }
       return true;
     }
     return false;
@@ -681,6 +1136,12 @@ class DatabaseManager {
     const prev = this.state.comments.length;
     this.state.comments = this.state.comments.filter(c => c.id !== id);
     this.persist(this.state);
+
+    if (pgPool) {
+      pgPool.query('DELETE FROM comments WHERE id = $1', [id])
+        .catch(err => console.error('[PostgreSQL] deleteComment error:', err.message));
+    }
+
     return this.state.comments.length < prev;
   }
 
@@ -705,15 +1166,43 @@ class DatabaseManager {
   public addAdmin(admin: AdminUser): AdminUser {
     this.state.admins.push(admin);
     this.persist(this.state);
+
+    if (pgPool) {
+      const username = admin.email.split('@')[0] + '-' + Date.now().toString().slice(-4);
+      pgPool.query(
+        `INSERT INTO admin_users (id, email, name, role, password_hash, created_at, username, is_active, login_count)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         ON CONFLICT (email) DO NOTHING`,
+        [admin.id, admin.email, admin.name, admin.role, admin.password_hash, admin.created_at, username, true, 0]
+      ).catch(() => {
+        pgPool?.query(
+          `INSERT INTO admin_users (id, email, name, role, password_hash, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (email) DO NOTHING`,
+          [admin.id, admin.email, admin.name, admin.role, admin.password_hash, admin.created_at]
+        ).catch(err => console.error('[PostgreSQL] addAdmin error:', err.message));
+      });
+    }
+
     return admin;
   }
 
   public deleteAdmin(id: string): boolean {
     if (this.state.admins.length <= 1) return false;
-    this.state.admins = this.state.admins.filter(a => a.id !== id && a.role !== 'owner');
+    const target = this.state.admins.find(a => a.id === id);
+    if (!target || target.role === 'owner') return false;
+
+    this.state.admins = this.state.admins.filter(a => a.id !== id);
     this.persist(this.state);
+
+    if (pgPool) {
+      pgPool.query('DELETE FROM admin_users WHERE id = $1 AND role != $2', [id, 'owner'])
+        .catch(err => console.error('[PostgreSQL] deleteAdmin error:', err.message));
+    }
+
     return true;
   }
 }
 
 export const db = new DatabaseManager();
+

@@ -115,14 +115,30 @@ export default function App() {
     setNewChapterAlerts([]);
   };
 
-  // Check URL hash routing for direct access like #login or #admin
+  // Check URL hash routing for direct access like #login, #admin, #novel/:slug, #reader/:novelSlug/:chapterSlug
   useEffect(() => {
     const handleHash = () => {
-      const hash = window.location.hash.toLowerCase().replace('#', '');
-      if (hash === 'login' || hash === 'admin') {
+      const hash = window.location.hash.replace(/^#\/?/, '').trim();
+      if (!hash) return;
+
+      const lower = hash.toLowerCase();
+      if (lower === 'login' || lower === 'admin') {
         setCurrentView(currentUser ? 'admin' : 'login');
-      } else if (hash === 'explore' || hash === 'about' || hash === 'latest') {
-        setCurrentView(hash);
+      } else if (lower.startsWith('novel/')) {
+        const slug = hash.substring(6).trim();
+        if (slug) {
+          setSelectedNovelSlug(decodeURIComponent(slug));
+          setCurrentView('novel');
+        }
+      } else if (lower.startsWith('reader/')) {
+        const parts = hash.substring(7).split('/');
+        if (parts[0] && parts[1]) {
+          setSelectedNovelSlug(decodeURIComponent(parts[0]));
+          setSelectedChapterSlug(decodeURIComponent(parts[1]));
+          setCurrentView('reader');
+        }
+      } else if (['explore', 'about', 'latest', 'privacy', 'terms'].includes(lower)) {
+        setCurrentView(lower);
       }
     };
     handleHash();
@@ -133,17 +149,22 @@ export default function App() {
   // Navigation handlers
   const handleNavigate = (view: string, param?: string) => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
-    if (view === 'login') {
+    if (view === 'login' || view === 'admin') {
+      window.location.hash = currentUser ? 'admin' : 'login';
       setCurrentView(currentUser ? 'admin' : 'login');
       return;
     }
-    if (view === 'admin') {
-      setCurrentView(currentUser ? 'admin' : 'login');
-      return;
+    if (view === 'home') {
+      window.location.hash = '';
+      setSelectedNovelSlug(null);
+      setSelectedChapterSlug(null);
+    } else if (['explore', 'about', 'latest', 'privacy', 'terms'].includes(view)) {
+      window.location.hash = view;
     }
     setCurrentView(view);
     if (view === 'novel' && param) {
       setSelectedNovelSlug(param);
+      window.location.hash = `novel/${param}`;
     } else if (view === 'genres') {
       const el = document.getElementById('discovery');
       if (el) el.scrollIntoView({ behavior: 'smooth' });
@@ -153,6 +174,7 @@ export default function App() {
   const handleOpenNovel = (slug: string) => {
     setSelectedNovelSlug(slug);
     setCurrentView('novel');
+    window.location.hash = `novel/${slug}`;
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
@@ -160,6 +182,8 @@ export default function App() {
     setSelectedNovelSlug(novelSlug);
     setSelectedChapterSlug(chapterSlug);
     setCurrentView('reader');
+    window.location.hash = `reader/${novelSlug}/${chapterSlug}`;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   // Login success
@@ -167,17 +191,19 @@ export default function App() {
     setCurrentUser(user);
     setShowLoginModal(false);
     setCurrentView('admin');
+    window.location.hash = 'admin';
   };
 
   const handleLogout = async () => {
     await api.logout();
     setCurrentUser(null);
     setCurrentView('home');
+    window.location.hash = '';
   };
 
   // Dynamic fetch if selectedNovelSlug is not found in memory (e.g. freshly created or direct deep link)
   useEffect(() => {
-    if (selectedNovelSlug && !novels.some(n => n.slug === selectedNovelSlug)) {
+    if (selectedNovelSlug && !novels.some(n => n.slug.toLowerCase() === selectedNovelSlug.toLowerCase() || n.id === selectedNovelSlug)) {
       api.getNovel(selectedNovelSlug)
         .then(fetchedNovel => {
           setNovels(prev => [fetchedNovel, ...prev.filter(n => n.id !== fetchedNovel.id && n.slug !== fetchedNovel.slug)]);
@@ -189,7 +215,9 @@ export default function App() {
   }, [selectedNovelSlug, novels]);
 
   // Extracted current novel & chapter for details & reader views
-  const currentNovel = (selectedNovelSlug ? novels.find(n => n.slug === selectedNovelSlug) : null) || novels[0];
+  const currentNovel = selectedNovelSlug
+    ? (novels.find(n => n.slug.toLowerCase() === selectedNovelSlug.toLowerCase() || n.id === selectedNovelSlug) || null)
+    : (currentView === 'novel' || currentView === 'reader' ? null : (novels[0] || null));
   const novelChapters = chapters.filter(c => c.novel_slug === currentNovel?.slug && c.status === 'published');
   const currentChapter = novelChapters.find(c => c.slug === selectedChapterSlug || c.id === selectedChapterSlug) || novelChapters[0];
 
@@ -271,16 +299,36 @@ export default function App() {
       <main className="flex-1">
         
         {/* ================= VIEW: CHAPTER READER ================= */}
-        {currentView === 'reader' && currentNovel && currentChapter && (
-          <ChapterReader
-            novel={currentNovel}
-            chapter={currentChapter}
-            allChapters={novelChapters}
-            contentLanguage={contentLanguage}
-            onLanguageChange={setContentLanguage}
-            onSelectChapter={handleOpenChapter}
-            onReturnToNovel={handleOpenNovel}
-          />
+        {currentView === 'reader' && (
+          currentNovel && currentChapter ? (
+            <ChapterReader
+              novel={currentNovel}
+              chapter={currentChapter}
+              allChapters={novelChapters}
+              contentLanguage={contentLanguage}
+              onLanguageChange={setContentLanguage}
+              onSelectChapter={handleOpenChapter}
+              onReturnToNovel={handleOpenNovel}
+            />
+          ) : loading ? (
+            <div className="min-h-[50vh] flex flex-col items-center justify-center py-20">
+              <div className="w-8 h-8 border-2 border-[#2C3A22] border-t-transparent rounded-full animate-spin mb-4" />
+              <p className="text-sm font-serif text-[#68715F]">Opening manuscript...</p>
+            </div>
+          ) : (
+            <div className="min-h-[50vh] flex flex-col items-center justify-center py-20 px-4 text-center">
+              <h2 className="text-2xl font-serif text-[#28311F] mb-2">Chapter Not Found</h2>
+              <p className="text-sm text-[#68715F] font-serif max-w-md mb-6">
+                This chapter draft has not been published or does not exist.
+              </p>
+              <button
+                onClick={() => handleNavigate('home')}
+                className="px-5 py-2.5 bg-[#2C3A22] text-[#EEF0E4] rounded-xl text-xs uppercase tracking-wider font-semibold cursor-pointer"
+              >
+                Return to Library
+              </button>
+            </div>
+          )
         )}
 
         {/* ================= VIEW: AUTHOR LOGIN ================= */}
@@ -303,6 +351,8 @@ export default function App() {
                 setNovels(prev => [saved, ...prev.filter(n => n.id !== saved.id && n.slug !== saved.slug)]);
                 setSelectedNovelSlug(saved.slug);
               }}
+              onOpenNovel={handleOpenNovel}
+              onOpenChapter={handleOpenChapter}
             />
           ) : (
             <AuthorLoginView
@@ -313,17 +363,37 @@ export default function App() {
         )}
 
         {/* ================= VIEW: NOVEL DETAILS ================= */}
-        {currentView === 'novel' && currentNovel && (
-          <NovelDetails
-            novel={currentNovel}
-            chapters={novelChapters}
-            interfaceLanguage={interfaceLanguage}
-            readingProgress={readingHistory.find(r => r.novel_slug === currentNovel.slug)}
-            isBookmarked={savedNovelSlugs.includes(currentNovel.slug)}
-            onToggleBookmark={handleToggleBookmark}
-            onReadChapter={handleOpenChapter}
-            onBack={() => setCurrentView('home')}
-          />
+        {currentView === 'novel' && (
+          currentNovel ? (
+            <NovelDetails
+              novel={currentNovel}
+              chapters={novelChapters}
+              interfaceLanguage={interfaceLanguage}
+              readingProgress={readingHistory.find(r => r.novel_slug === currentNovel.slug)}
+              isBookmarked={savedNovelSlugs.includes(currentNovel.slug)}
+              onToggleBookmark={handleToggleBookmark}
+              onReadChapter={handleOpenChapter}
+              onBack={() => handleNavigate('home')}
+            />
+          ) : loading ? (
+            <div className="min-h-[50vh] flex flex-col items-center justify-center py-20">
+              <div className="w-8 h-8 border-2 border-[#2C3A22] border-t-transparent rounded-full animate-spin mb-4" />
+              <p className="text-sm font-serif text-[#68715F]">Gathering manuscript details...</p>
+            </div>
+          ) : (
+            <div className="min-h-[50vh] flex flex-col items-center justify-center py-20 px-4 text-center">
+              <h2 className="text-2xl font-serif text-[#28311F] mb-2">Novel Not Found</h2>
+              <p className="text-sm text-[#68715F] font-serif max-w-md mb-6">
+                The requested novel could not be located in the current library.
+              </p>
+              <button
+                onClick={() => handleNavigate('home')}
+                className="px-5 py-2.5 bg-[#2C3A22] text-[#EEF0E4] rounded-xl text-xs uppercase tracking-wider font-semibold cursor-pointer"
+              >
+                Return to Library
+              </button>
+            </div>
+          )
         )}
 
         {/* ================= VIEW: CHAPTER ARCHIVE ================= */}

@@ -54,6 +54,14 @@ export function removeAuthToken() {
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
+const RAW_API_URL = (import.meta.env.VITE_API_URL || '').trim();
+const API_BASE_URL = RAW_API_URL.replace(/\/+$/, '').replace(/\/api$/, '');
+
+export function endpoint(path: string): string {
+  const cleanPath = path.startsWith('/') ? path : `/${path}`;
+  return `${API_BASE_URL}${cleanPath}`;
+}
+
 function getHeaders(hasBody: boolean = false): HeadersInit {
   const headers: Record<string, string> = {};
   if (hasBody) {
@@ -69,7 +77,7 @@ function getHeaders(hasBody: boolean = false): HeadersInit {
 export const api = {
   // Authentication
   async login(email: string, password: string): Promise<{ token: string; user: AdminUser }> {
-    const res = await fetch('/api/auth/login', {
+    const res = await fetch(endpoint('/api/auth/login'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ email, password })
@@ -87,7 +95,7 @@ export const api = {
     const token = getAuthToken();
     if (!token) return null;
     try {
-      const res = await fetch('/api/auth/session', {
+      const res = await fetch(endpoint('/api/auth/session'), {
         headers: getHeaders()
       });
       if (!res.ok) {
@@ -103,7 +111,7 @@ export const api = {
 
   async logout(): Promise<void> {
     try {
-      await fetch('/api/auth/logout', {
+      await fetch(endpoint('/api/auth/logout'), {
         method: 'POST',
         headers: getHeaders()
       });
@@ -114,20 +122,22 @@ export const api = {
 
   // Novels
   async getNovels(): Promise<Novel[]> {
-    const res = await fetch('/api/novels');
+    const res = await fetch(endpoint('/api/novels'));
     if (!res.ok) throw new Error('Failed to load novels');
     return res.json();
   },
 
   async getNovel(slug: string): Promise<Novel> {
-    const res = await fetch(`/api/novels/${slug}`);
+    const res = await fetch(endpoint(`/api/novels/${encodeURIComponent(slug)}`));
     if (!res.ok) throw new Error('Novel not found');
     return res.json();
   },
 
-  async saveNovel(novel: Partial<Novel>): Promise<Novel> {
+  async saveNovel(novel: Partial<Novel>, originalSlug?: string): Promise<Novel> {
     const isUpdate = Boolean(novel.id && !novel.id.startsWith('new-'));
-    const url = isUpdate ? `/api/novels/${novel.slug}` : '/api/novels';
+    // If updating, route by the existing slug or id to prevent 404 when slug was edited
+    const identifier = originalSlug || novel.id || novel.slug;
+    const url = isUpdate ? endpoint(`/api/novels/${encodeURIComponent(identifier || '')}`) : endpoint('/api/novels');
     const method = isUpdate ? 'PUT' : 'POST';
     const res = await fetch(url, {
       method,
@@ -142,23 +152,26 @@ export const api = {
   },
 
   async deleteNovel(slug: string): Promise<void> {
-    const res = await fetch(`/api/novels/${slug}`, {
+    const res = await fetch(endpoint(`/api/novels/${encodeURIComponent(slug)}`), {
       method: 'DELETE',
       headers: getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to delete novel');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to delete novel' }));
+      throw new Error(err.error || 'Failed to delete novel');
+    }
   },
 
   // Chapters
   async getChapters(novelSlug: string, includeDrafts: boolean = false): Promise<Chapter[]> {
-    const url = `/api/novels/${novelSlug}/chapters${includeDrafts ? '?include_drafts=true' : ''}`;
+    const url = endpoint(`/api/novels/${encodeURIComponent(novelSlug)}/chapters${includeDrafts ? '?include_drafts=true' : ''}`);
     const res = await fetch(url);
     if (!res.ok) throw new Error('Failed to load chapters');
     return res.json();
   },
 
   async getChapter(idOrSlug: string, novelSlug?: string): Promise<Chapter> {
-    const url = `/api/chapters/${idOrSlug}${novelSlug ? `?novel=${novelSlug}` : ''}`;
+    const url = endpoint(`/api/chapters/${encodeURIComponent(idOrSlug)}${novelSlug ? `?novel=${encodeURIComponent(novelSlug)}` : ''}`);
     const res = await fetch(url);
     if (!res.ok) throw new Error('Chapter not found');
     return res.json();
@@ -166,7 +179,7 @@ export const api = {
 
   async saveChapter(chapter: Partial<Chapter>): Promise<Chapter> {
     const isUpdate = !!chapter.id && !chapter.id.startsWith('new-');
-    const url = isUpdate ? `/api/chapters/${chapter.id}` : '/api/chapters';
+    const url = isUpdate ? endpoint(`/api/chapters/${encodeURIComponent(chapter.id!)}`) : endpoint('/api/chapters');
     const method = isUpdate ? 'PUT' : 'POST';
     const res = await fetch(url, {
       method,
@@ -181,17 +194,20 @@ export const api = {
   },
 
   async deleteChapter(id: string): Promise<void> {
-    const res = await fetch(`/api/chapters/${id}`, {
+    const res = await fetch(endpoint(`/api/chapters/${encodeURIComponent(id)}`), {
       method: 'DELETE',
       headers: getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to delete chapter');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to delete chapter' }));
+      throw new Error(err.error || 'Failed to delete chapter');
+    }
   },
 
   // Reading Progress & Alerts
   async recordProgress(novelSlug: string, chapter: Chapter, percent: number = 100): Promise<void> {
     const readerId = getReaderId();
-    await fetch('/api/reading-progress', {
+    await fetch(endpoint('/api/reading-progress'), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -206,44 +222,50 @@ export const api = {
 
   async getReadingProgress(): Promise<ReadingProgress[]> {
     const readerId = getReaderId();
-    const res = await fetch(`/api/reading-progress?reader_id=${readerId}`);
+    const res = await fetch(endpoint(`/api/reading-progress?reader_id=${encodeURIComponent(readerId)}`));
     if (!res.ok) return [];
     return res.json();
   },
 
   async getNewChapterAlerts(): Promise<NewChapterAlertData[]> {
     const readerId = getReaderId();
-    const res = await fetch(`/api/reading-progress/alerts?reader_id=${readerId}`);
+    const res = await fetch(endpoint(`/api/reading-progress/alerts?reader_id=${encodeURIComponent(readerId)}`));
     if (!res.ok) return [];
     return res.json();
   },
 
   // Announcements
   async getAnnouncements(all: boolean = false): Promise<Announcement[]> {
-    const res = await fetch(`/api/announcements${all ? '?all=true' : ''}`);
+    const res = await fetch(endpoint(`/api/announcements${all ? '?all=true' : ''}`));
     if (!res.ok) return [];
     return res.json();
   },
 
   async saveAnnouncement(ann: Partial<Announcement>): Promise<Announcement> {
     const isUpdate = !!ann.id && !ann.id.startsWith('new-');
-    const url = isUpdate ? `/api/announcements/${ann.id}` : '/api/announcements';
+    const url = isUpdate ? endpoint(`/api/announcements/${encodeURIComponent(ann.id!)}`) : endpoint('/api/announcements');
     const method = isUpdate ? 'PUT' : 'POST';
     const res = await fetch(url, {
       method,
       headers: getHeaders(true),
       body: JSON.stringify(ann)
     });
-    if (!res.ok) throw new Error('Failed to save announcement');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to save announcement' }));
+      throw new Error(err.error || 'Failed to save announcement');
+    }
     return res.json();
   },
 
   async deleteAnnouncement(id: string): Promise<void> {
-    const res = await fetch(`/api/announcements/${id}`, {
+    const res = await fetch(endpoint(`/api/announcements/${encodeURIComponent(id)}`), {
       method: 'DELETE',
       headers: getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to delete announcement');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to delete announcement' }));
+      throw new Error(err.error || 'Failed to delete announcement');
+    }
   },
 
   getDismissedAnnouncements(): string[] {
@@ -264,19 +286,19 @@ export const api = {
 
   // Comments
   async getComments(novelSlug: string): Promise<Comment[]> {
-    const res = await fetch(`/api/novels/${novelSlug}/comments`);
+    const res = await fetch(endpoint(`/api/novels/${encodeURIComponent(novelSlug)}/comments`));
     if (!res.ok) return [];
     return res.json();
   },
 
   async getAllComments(): Promise<Comment[]> {
-    const res = await fetch('/api/admin/comments', { headers: getHeaders() });
+    const res = await fetch(endpoint('/api/admin/comments'), { headers: getHeaders() });
     if (!res.ok) return [];
     return res.json();
   },
 
   async postComment(novelSlug: string, author_name: string, content: string): Promise<Comment> {
-    const res = await fetch(`/api/novels/${novelSlug}/comments`, {
+    const res = await fetch(endpoint(`/api/novels/${encodeURIComponent(novelSlug)}/comments`), {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ author_name, content })
@@ -289,7 +311,7 @@ export const api = {
   },
 
   async updateCommentStatus(id: string, status: 'approved' | 'hidden'): Promise<void> {
-    const res = await fetch(`/api/comments/${id}/status`, {
+    const res = await fetch(endpoint(`/api/comments/${encodeURIComponent(id)}/status`), {
       method: 'PUT',
       headers: getHeaders(true),
       body: JSON.stringify({ status })
@@ -298,22 +320,25 @@ export const api = {
   },
 
   async deleteComment(id: string): Promise<void> {
-    const res = await fetch(`/api/comments/${id}`, {
+    const res = await fetch(endpoint(`/api/comments/${encodeURIComponent(id)}`), {
       method: 'DELETE',
       headers: getHeaders()
     });
-    if (!res.ok) throw new Error('Failed to delete comment');
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to delete comment' }));
+      throw new Error(err.error || 'Failed to delete comment');
+    }
   },
 
   // Site Settings
   async getSettings(): Promise<SiteSettings> {
-    const res = await fetch('/api/site-settings');
+    const res = await fetch(endpoint('/api/site-settings'));
     if (!res.ok) throw new Error('Failed to load site settings');
     return res.json();
   },
 
   async updateSettings(settings: Partial<SiteSettings>): Promise<SiteSettings> {
-    const res = await fetch('/api/site-settings', {
+    const res = await fetch(endpoint('/api/site-settings'), {
       method: 'PUT',
       headers: getHeaders(true),
       body: JSON.stringify(settings)
@@ -324,19 +349,19 @@ export const api = {
 
   // Admin stats & users
   async getAdminStats(): Promise<AdminStats> {
-    const res = await fetch('/api/admin/stats', { headers: getHeaders() });
+    const res = await fetch(endpoint('/api/admin/stats'), { headers: getHeaders() });
     if (!res.ok) throw new Error('Failed to load stats');
     return res.json();
   },
 
   async getAdminUsers(): Promise<AdminUser[]> {
-    const res = await fetch('/api/admin/users', { headers: getHeaders() });
+    const res = await fetch(endpoint('/api/admin/users'), { headers: getHeaders() });
     if (!res.ok) return [];
     return res.json();
   },
 
   async createAdminUser(userData: { email: string; name: string; role: string; password: string }): Promise<AdminUser> {
-    const res = await fetch('/api/admin/users', {
+    const res = await fetch(endpoint('/api/admin/users'), {
       method: 'POST',
       headers: getHeaders(true),
       body: JSON.stringify(userData)
@@ -346,6 +371,17 @@ export const api = {
       throw new Error(err.error || 'Failed to create admin');
     }
     return res.json();
+  },
+
+  async deleteAdminUser(id: string): Promise<void> {
+    const res = await fetch(endpoint(`/api/admin/users/${encodeURIComponent(id)}`), {
+      method: 'DELETE',
+      headers: getHeaders()
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to delete staff member' }));
+      throw new Error(err.error || 'Failed to delete staff member');
+    }
   },
 
   // Cover image upload
@@ -366,7 +402,7 @@ export const api = {
       reader.readAsDataURL(file);
     });
 
-    const res = await fetch('/api/upload/cover', {
+    const res = await fetch(endpoint('/api/upload/cover'), {
       method: 'POST',
       headers: getHeaders(true),
       body: JSON.stringify({
@@ -383,3 +419,4 @@ export const api = {
     return res.json();
   }
 };
+
