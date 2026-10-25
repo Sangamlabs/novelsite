@@ -16,9 +16,9 @@
         "en"
       ],
       "is_featured": false,
+      "translations": {},
       "created_at": "2026-10-24T13:51:36.224Z",
-      "updated_at": "2026-10-24T13:51:36.229Z",
-      "translations": {}
+      "updated_at": "2026-10-24T13:51:36.229Z"
     },
     {
       "id": "nov-1792848741008",
@@ -35,9 +35,90 @@
         "en"
       ],
       "is_featured": false,
+      "translations": {},
       "created_at": "2026-10-24T13:32:21.008Z",
-      "updated_at": "2026-10-24T13:32:21.008Z",
-      "translations": {}
+      "updated_at": "2026-10-24T13:32:21.008Z"
+    },
+    {
+      "id": "nov-4",
+      "slug": "monsoon-memories",
+      "title": "Monsoon Memories",
+      "synopsis": "A heartfelt journey through an ancestral courtyard house in Kerala. Amidst the drumming of continuous rain, steam from cardamom tea, and handwritten diaries discovered inside an old rosewood chest, decades of quiet romance unveil.",
+      "author": "Ananya Sharma",
+      "cover_url": "/src/assets/images/novel_cover_monsoon_rain_1792815711515.jpg",
+      "genres": [
+        "Literary Fiction",
+        "Romance",
+        "Magical Realism"
+      ],
+      "status": "ongoing",
+      "available_languages": [
+        "en",
+        "hi"
+      ],
+      "is_featured": false,
+      "translations": {
+        "hi": {
+          "title": "मॉनसून मेमोरीज",
+          "synopsis": "केरल के एक पुराने आंगन में बारिश की बूंदों और इलायची वाली चाय के बीच, संदूक में रखी पुरानी डायरियों से सामने आती है एक अनकही प्रेम कहानी।"
+        }
+      },
+      "created_at": "2026-06-01T09:00:00.000Z",
+      "updated_at": "2026-10-15T18:45:00.000Z"
+    },
+    {
+      "id": "nov-3",
+      "slug": "apothecary-of-the-forgotten-ward",
+      "title": "Apothecary of the Forgotten Ward",
+      "synopsis": "Tucked down an unmapped cobblestone alley in old Tokyo, a gentle herbalist brews remedies for ailments that medicine cannot name: phantom homesickness, the weight of forgotten promises, and memories left behind in old raincoats.",
+      "author": "Satsuki Tanaka",
+      "cover_url": "/src/assets/images/novel_cover_tokyo_apothecary_1792815712119.jpg",
+      "genres": [
+        "Slice of Life",
+        "Urban Fantasy",
+        "Healing"
+      ],
+      "status": "ongoing",
+      "available_languages": [
+        "en",
+        "jp"
+      ],
+      "is_featured": false,
+      "translations": {
+        "jp": {
+          "title": "忘れられた街区の調剤薬局",
+          "synopsis": "地図にない路地の奥、木造の古い薬舗で、言葉にできない心の痛みを癒す処方箋を調合する薬師の静謐な日々の物語。"
+        }
+      },
+      "created_at": "2026-05-18T12:00:00.000Z",
+      "updated_at": "2026-10-22T09:15:00.000Z"
+    },
+    {
+      "id": "nov-2",
+      "slug": "blade-of-the-jade-lotus",
+      "title": "Blade of the Jade Lotus",
+      "synopsis": "In a mist-shrouded river sanctuary where lotus blossoms bloom with emerald embers, an exiled swordsmith must forge a blade capable of cutting through lingering illusions before the autumn rains flood the valley.",
+      "author": "Kairo Tanaka",
+      "cover_url": "/src/assets/images/novel_cover_jade_lotus_1792815711079.jpg",
+      "genres": [
+        "High Fantasy",
+        "Martial Arts",
+        "Philosophical"
+      ],
+      "status": "ongoing",
+      "available_languages": [
+        "en",
+        "jp"
+      ],
+      "is_featured": false,
+      "translations": {
+        "jp": {
+          "title": "翡翠蓮の剣",
+          "synopsis": "霧深い聖域に咲く翡翠の蓮。追放された刀匠は、幻影を断ち切る唯一の刃を鍛えねばならない。秋の長雨が谷を満たす前に。"
+        }
+      },
+      "created_at": "2026-04-12T08:00:00.000Z",
+      "updated_at": "2026-10-18T16:00:00.000Z"
     },
     {
       "id": "nov-1",
@@ -58,99 +139,18 @@
         "hi"
       ],
       "is_featured": true,
-      "created_at": "2026-03-01T10:00:00Z",
-      "updated_at": "2026-10-24T04:53:58.446Z",
       "translations": {
-        "jp": {
-          "title": "囁く天蓋の書架",
-          "synopsis": "古代の巨樹の根元に眠る忘れられた書庫。すべての葉が天の下で囁かれた言葉を記憶している。若き学徒が古の暗号を解読したとき、静寂の森が目覚め始める。"
-        },
         "hi": {
           "title": "सरगोशियों की छतरी",
           "synopsis": "घने प्राचीन जंगल के बीच एक ऐसी पुस्तकालय है जिसके पत्ते दुनिया के हर अनकहे सच को याद रखते हैं। जब एक खोजी पुराने नक्शे की पहेली सुलझाती है, तो जड़ों में हलचल शुरू होती है।"
-        }
-      }
-    },
-    {
-      "id": "nov-2",
-      "slug": "blade-of-the-jade-lotus",
-      "title": "Blade of the Jade Lotus",
-      "synopsis": "In a mist-shrouded river sanctuary where lotus blossoms bloom with emerald embers, an exiled swordsmith must forge a blade capable of cutting through lingering illusions before the autumn rains flood the valley.",
-      "author": "Kairo Tanaka",
-      "cover_url": "/src/assets/images/novel_cover_jade_lotus_1792815711079.jpg",
-      "genres": [
-        "High Fantasy",
-        "Martial Arts",
-        "Philosophical"
-      ],
-      "status": "ongoing",
-      "available_languages": [
-        "en",
-        "jp"
-      ],
-      "is_featured": false,
-      "created_at": "2026-04-12T08:00:00Z",
-      "updated_at": "2026-10-18T16:00:00Z",
-      "translations": {
+        },
         "jp": {
-          "title": "翡翠蓮の剣",
-          "synopsis": "霧深い聖域に咲く翡翠の蓮。追放された刀匠は、幻影を断ち切る唯一の刃を鍛えねばならない。秋の長雨が谷を満たす前に。"
+          "title": "囁く天蓋の書架",
+          "synopsis": "古代の巨樹の根元に眠る忘れられた書庫。すべての葉が天の下で囁かれた言葉を記憶している。若き学徒が古の暗号を解読したとき、静寂の森が目覚め始める。"
         }
-      }
-    },
-    {
-      "id": "nov-3",
-      "slug": "apothecary-of-the-forgotten-ward",
-      "title": "Apothecary of the Forgotten Ward",
-      "synopsis": "Tucked down an unmapped cobblestone alley in old Tokyo, a gentle herbalist brews remedies for ailments that medicine cannot name: phantom homesickness, the weight of forgotten promises, and memories left behind in old raincoats.",
-      "author": "Satsuki Tanaka",
-      "cover_url": "/src/assets/images/novel_cover_tokyo_apothecary_1792815712119.jpg",
-      "genres": [
-        "Slice of Life",
-        "Urban Fantasy",
-        "Healing"
-      ],
-      "status": "ongoing",
-      "available_languages": [
-        "en",
-        "jp"
-      ],
-      "is_featured": false,
-      "created_at": "2026-05-18T12:00:00Z",
-      "updated_at": "2026-10-22T09:15:00Z",
-      "translations": {
-        "jp": {
-          "title": "忘れられた街区の調剤薬局",
-          "synopsis": "地図にない路地の奥、木造の古い薬舗で、言葉にできない心の痛みを癒す処方箋を調合する薬師の静謐な日々の物語。"
-        }
-      }
-    },
-    {
-      "id": "nov-4",
-      "slug": "monsoon-memories",
-      "title": "Monsoon Memories",
-      "synopsis": "A heartfelt journey through an ancestral courtyard house in Kerala. Amidst the drumming of continuous rain, steam from cardamom tea, and handwritten diaries discovered inside an old rosewood chest, decades of quiet romance unveil.",
-      "author": "Ananya Sharma",
-      "cover_url": "/src/assets/images/novel_cover_monsoon_rain_1792815711515.jpg",
-      "genres": [
-        "Literary Fiction",
-        "Romance",
-        "Magical Realism"
-      ],
-      "status": "ongoing",
-      "available_languages": [
-        "en",
-        "hi"
-      ],
-      "is_featured": false,
-      "created_at": "2026-06-01T09:00:00Z",
-      "updated_at": "2026-10-15T18:45:00Z",
-      "translations": {
-        "hi": {
-          "title": "मॉनसून मेमोरीज",
-          "synopsis": "केरल के एक पुराने आंगन में बारिश की बूंदों और इलायची वाली चाय के बीच, संदूक में रखी पुरानी डायरियों से सामने आती है एक अनकही प्रेम कहानी।"
-        }
-      }
+      },
+      "created_at": "2026-03-01T10:00:00.000Z",
+      "updated_at": "2026-10-24T04:53:58.446Z"
     }
   ],
   "chapters": [
@@ -217,34 +217,25 @@
   "reading_progress": [],
   "comments": [
     {
-      "id": "com-1",
-      "novel_id": "nov-1",
-      "novel_slug": "the-whispering-canopy",
-      "author_name": "Mira S.",
-      "content": "The description of the tree roots humming with old words gave me absolute chills. The atmosphere is so peaceful yet brimming with ancient wonder.",
-      "status": "approved",
-      "created_at": "2026-10-21T14:20:00Z"
-    },
-    {
-      "id": "com-2",
-      "novel_id": "nov-1",
-      "novel_slug": "the-whispering-canopy",
-      "author_name": "Kazuhiro",
-      "content": "日本語の翻訳も非常に美しく整えられていて感動しました。次章を楽しみに待っています！",
-      "status": "approved",
-      "created_at": "2026-10-22T11:45:00Z"
-    },
-    {
-      "id": "com-3",
-      "novel_id": "nov-4",
-      "novel_slug": "monsoon-memories",
-      "author_name": "Devika P.",
-      "content": "The courtyard imagery took me right back to my grandparents’ ancestral home during July storms. Beautifully written.",
-      "status": "approved",
-      "created_at": "2026-10-22T16:10:00Z"
+      "id": "com-1792850218208-88dyi",
+      "novel_id": "nov-1792850218200",
+      "novel_slug": "audit-novel-1792850218200-renamed",
+      "chapter_slug": null,
+      "author_name": "Audit Reader",
+      "content": "Brilliant prose!",
+      "status": "pending",
+      "created_at": "2026-10-24T13:56:58.208Z"
     }
   ],
   "admins": [
+    {
+      "id": "usr-owner-1",
+      "email": "akhyanaweb@gmail.com",
+      "name": "Akhyana Owner",
+      "role": "owner",
+      "password_hash": "$2a$12$ImwOv6OxxE3gIwW7/34L/ebo0bF7ygw/XAJyOcaZVymB0Ww.2vgUS",
+      "created_at": "2026-10-25T10:25:18.496Z"
+    },
     {
       "id": "adm-test-1792850218210",
       "email": "audit-1792850218210@akhyana.local",
