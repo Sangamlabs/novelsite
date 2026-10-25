@@ -50,6 +50,7 @@ export default function App() {
   const [genreFilter, setGenreFilter] = useState<string>('All');
   const [searchQuery, setSearchQuery] = useState('');
   const [loading, setLoading] = useState(true);
+  const [connectionError, setConnectionError] = useState<string | null>(null);
 
   // Initialize data on mount
   useEffect(() => {
@@ -58,19 +59,20 @@ export default function App() {
 
   const loadInitialData = async () => {
     setLoading(true);
+    setConnectionError(null);
     try {
       setSavedNovelSlugs(getBookmarks());
 
       // Check active user session
-      const user = await api.verifySession();
+      const user = await api.verifySession().catch(() => null);
       setCurrentUser(user);
 
-      // Load novels & chapters
+      // Load novels & settings
       const [novelList, sett] = await Promise.all([
         api.getNovels(),
         api.getSettings().catch(() => null)
       ]);
-      setNovels(novelList);
+      setNovels(novelList || []);
       if (sett) setSettings(sett);
 
       // Load all published chapters
@@ -78,21 +80,22 @@ export default function App() {
       setChapters(allCh);
 
       // Load reading progress & alerts
-      const prog = await api.getReadingProgress();
+      const prog = await api.getReadingProgress().catch(() => []);
       setReadingHistory(prog);
 
-      const alerts = await api.getNewChapterAlerts();
+      const alerts = await api.getNewChapterAlerts().catch(() => []);
       setNewChapterAlerts(alerts);
 
       // Load active announcement that hasn't been dismissed
-      const announcements = await api.getAnnouncements(false);
+      const announcements = await api.getAnnouncements(false).catch(() => []);
       const dismissed = api.getDismissedAnnouncements();
       const firstValid = announcements.find(a => !dismissed.includes(a.id));
       if (firstValid) {
         setActiveAnnouncement(firstValid);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load Akhyana platform data:', err);
+      setConnectionError(err.message || 'Unable to connect to the literary backend');
     } finally {
       setLoading(false);
     }
@@ -503,6 +506,24 @@ export default function App() {
                   </button>
                 ))}
               </div>
+
+              {/* Backend Connection Notice if initial load fails */}
+              {connectionError && novels.length === 0 && (
+                <div className="mb-8 p-6 rounded-2xl bg-[#DDE5D2]/60 border border-[#2C3A22]/20 flex flex-col sm:flex-row items-center justify-between gap-4 text-center sm:text-left">
+                  <div>
+                    <h3 className="font-serif text-base font-semibold text-[#28311F]">Backend Connection Notice</h3>
+                    <p className="font-serif text-xs text-[#68715F] mt-1">
+                      {connectionError} — The production backend may be establishing its initial connection.
+                    </p>
+                  </div>
+                  <button
+                    onClick={loadInitialData}
+                    className="px-4 py-2 bg-[#2C3A22] text-[#EEF0E4] rounded-xl text-xs font-serif uppercase tracking-wider font-semibold cursor-pointer shrink-0"
+                  >
+                    Retry Connection
+                  </button>
+                </div>
+              )}
 
               {/* Novels Grid */}
               {filteredNovels.length === 0 ? (
