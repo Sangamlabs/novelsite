@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import bcrypt from 'bcryptjs';
 import pg from 'pg';
+import { logger } from './logger.ts';
 const { Pool } = pg;
 
 export interface NovelTranslation {
@@ -484,12 +485,21 @@ class DatabaseManager {
   }
 
   private async initPostgreSQLSync() {
-    if (!pgPool) return;
+    if (!pgPool) {
+      logger.info('db.init.memory', 'No DATABASE_URL configured; operating with persistent local JSON store.');
+      return;
+    }
     try {
-      // Test connectivity and load persisted records if available
-      const testRes = await pgPool.query('SELECT 1 FROM novels LIMIT 1').catch(() => null);
-      if (testRes) {
-        console.log('[PostgreSQL] Connection established. Hydrating active state from PostgreSQL...');
+      // 1. Check if tables exist and count novels
+      const countRes = await pgPool.query('SELECT COUNT(*) FROM novels').catch(() => null);
+      if (!countRes) {
+        logger.warn('db.init.pending_migration', 'PostgreSQL tables not initialized. Run npm run migrate.');
+        return;
+      }
+
+      const count = parseInt(countRes.rows[0]?.count || '0', 10);
+      if (count > 0) {
+        logger.info('db.init.hydrating', `PostgreSQL contains ${count} novels. Hydrating active state from PostgreSQL...`);
         const [novelsRes, chaptersRes, announcementsRes, commentsRes, adminsRes] = await Promise.all([
           pgPool.query('SELECT * FROM novels ORDER BY created_at DESC'),
           pgPool.query('SELECT * FROM chapters ORDER BY chapter_number ASC'),
@@ -525,9 +535,9 @@ class DatabaseManager {
             order_index: r.order_index,
             title: r.title,
             slug: r.slug,
-            body: r.body,
-            language: r.language,
-            status: r.status,
+            body: r.body || '',
+            language: r.language || 'en',
+            status: r.status || 'draft',
             cover_url: r.cover_url || null,
             published_at: r.published_at,
             created_at: r.created_at,
@@ -556,6 +566,7 @@ class DatabaseManager {
             id: r.id,
             novel_id: r.novel_id,
             novel_slug: r.novel_slug,
+            chapter_slug: r.chapter_slug,
             author_name: r.author_name,
             content: r.content,
             status: r.status,
@@ -567,22 +578,117 @@ class DatabaseManager {
           this.state.admins = adminsRes.rows.map(r => ({
             id: r.id,
             email: r.email,
-            name: r.name,
-            role: r.role,
+            name: r.name || 'Staff Member',
+            role: r.role || 'editor',
             password_hash: r.password_hash,
             created_at: r.created_at
           }));
         }
-        this.persist(this.state);
-        console.log('[PostgreSQL] State hydrated successfully from PostgreSQL.');
       } else {
-        // If table doesn't have data, seed current state into PostgreSQL
-        console.log('[PostgreSQL] Connected. Database tables empty; seeding initial records...');
+        logger.info('db.init.seeding', 'PostgreSQL database empty; seeding initial literary catalog...');
         await this.syncAllToPostgreSQL();
       }
+
+      // 2. Safe & Repeatable Owner Account Synchronization
+      await this.ensureOwnerAccountSync();
+
+      this.persist(this.state);
       this.pgInitialized = true;
+      logger.info('db.init.success', 'PostgreSQL state synchronized successfully');
     } catch (err: any) {
-      console.warn('[PostgreSQL] Hydration notice (continuing with persistent local store):', err.message);
+      logger.warn('db.init.warning', 'PostgreSQL hydration notice (operating with local memory/disk store)', { error: err.message });
+    }
+  }
+
+  private async ensureOwnerAccountSync() {
+    const configuredOwnerEmail = (process.env.OWNER_EMAIL || 'owner@akhyana.lit').trim().toLowerCase();
+    let configuredPasswordHash = DEFAULT_HASH;
+
+    if (process.env.OWNER_PASSWORD_HASH) {
+      const raw = process.env.OWNER_PASSWORD_HASH.trim();
+      if (/^\$2[aby]\$\d{2}\$/.test(raw)) {
+        configuredPasswordHash = raw;
+      } else {
+        // Plain text password provided in OWNER_PASSWORD_HASH; securely convert to bcrypt
+        configuredPasswordHash = bcrypt.hashSync(raw, 10);
+      }
+    } else if (process.env.OWNER_PASSWORD || process.env.ADMIN_PASSWORD) {
+      const raw = (process.env.OWNER_PASSWORD || process.env.ADMIN_PASSWORD)!.trim();
+      configuredPasswordHash = bcrypt.hashSync(raw, 10);
+    }
+
+    if (pgPool) {
+      try {
+        const ownerRes = await pgPool.query(
+          "SELECT * FROM admin_users WHERE role = 'owner' OR LOWER(TRIM(email)) = $1 ORDER BY (role = 'owner') DESC LIMIT 1",
+          [configuredOwnerEmail]
+        );
+
+        if (ownerRes.rows.length === 0) {
+          // No owner account in PostgreSQL: insert configured owner
+          const newOwner: AdminUser = {
+            id: 'usr-owner-1',
+            email: configuredOwnerEmail,
+            name: 'Akhyana Owner',
+            role: 'owner',
+            password_hash: configuredPasswordHash,
+            created_at: new Date().toISOString()
+          };
+
+          await pgPool.query(
+            `INSERT INTO admin_users (id, email, name, role, password_hash, created_at, username, is_active, login_count)
+             VALUES ($1, $2, $3, 'owner', $4, $5, $6, true, 0)
+             ON CONFLICT (email) DO UPDATE SET role = 'owner', password_hash = EXCLUDED.password_hash`,
+            [newOwner.id, newOwner.email, newOwner.name, newOwner.password_hash, newOwner.created_at, newOwner.email.split('@')[0]]
+          );
+          logger.info('auth.owner.initialized', 'Configured owner account initialized in PostgreSQL', { email: configuredOwnerEmail });
+
+          this.state.admins = [newOwner, ...this.state.admins.filter(a => a.email.toLowerCase() !== configuredOwnerEmail && a.id !== newOwner.id)];
+        } else {
+          const dbOwner = ownerRes.rows[0];
+          const shouldUpdateEmail = dbOwner.email.toLowerCase() !== configuredOwnerEmail;
+          const explicitReset = process.env.RESET_OWNER_PASSWORD === 'true' || process.env.OWNER_PASSWORD_RESET === 'true';
+
+          if (shouldUpdateEmail || explicitReset) {
+            const updatedHash = explicitReset ? configuredPasswordHash : dbOwner.password_hash;
+            await pgPool.query(
+              `UPDATE admin_users SET email = $1, password_hash = $2, role = 'owner' WHERE id = $3`,
+              [configuredOwnerEmail, updatedHash, dbOwner.id]
+            );
+            logger.info('auth.owner.synced', 'Synchronized owner account credentials from environment', {
+              email: configuredOwnerEmail,
+              passwordReset: explicitReset
+            });
+            dbOwner.email = configuredOwnerEmail;
+            dbOwner.password_hash = updatedHash;
+          }
+
+          const syncUser: AdminUser = {
+            id: dbOwner.id,
+            email: dbOwner.email,
+            name: dbOwner.name || 'Akhyana Owner',
+            role: 'owner',
+            password_hash: dbOwner.password_hash,
+            created_at: dbOwner.created_at
+          };
+          this.state.admins = [syncUser, ...this.state.admins.filter(a => a.id !== syncUser.id && a.email.toLowerCase() !== syncUser.email.toLowerCase())];
+        }
+      } catch (err: any) {
+        logger.warn('auth.owner.sync_error', 'Notice during owner synchronization', { error: err.message });
+      }
+    } else {
+      // Local memory-only mode: ensure configured owner is present
+      const memOwner = this.state.admins.find(a => a.role === 'owner');
+      if (!memOwner) {
+        this.state.admins.unshift({
+          id: 'usr-owner-1',
+          email: configuredOwnerEmail,
+          name: 'Akhyana Owner',
+          role: 'owner',
+          password_hash: configuredPasswordHash,
+          created_at: new Date().toISOString()
+        });
+      }
     }
   }
 
@@ -1159,8 +1265,39 @@ class DatabaseManager {
     return this.state.admins;
   }
 
-  public findAdminByEmail(email: string): AdminUser | undefined {
-    return this.state.admins.find(a => a.email.toLowerCase() === email.toLowerCase());
+  public async findAdminByEmail(email: string): Promise<AdminUser | undefined> {
+    if (!email) return undefined;
+    const clean = email.trim().toLowerCase();
+    let admin = this.state.admins.find(a => (a.email || '').trim().toLowerCase() === clean);
+    if (!admin && pgPool) {
+      try {
+        const res = await pgPool.query(
+          'SELECT id, email, name, role, password_hash, created_at FROM admin_users WHERE LOWER(TRIM(email)) = $1 OR LOWER(TRIM(username)) = $1 LIMIT 1',
+          [clean]
+        );
+        if (res.rows.length > 0) {
+          const r = res.rows[0];
+          admin = {
+            id: r.id,
+            email: r.email,
+            name: r.name || 'Staff Member',
+            role: r.role || 'editor',
+            password_hash: r.password_hash,
+            created_at: r.created_at
+          };
+          this.state.admins.push(admin);
+        }
+      } catch (err: any) {
+        logger.warn('db.find_admin.error', 'Live PostgreSQL admin lookup error', { error: err.message });
+      }
+    }
+    return admin;
+  }
+
+  public findAdminByEmailSync(email: string): AdminUser | undefined {
+    if (!email) return undefined;
+    const clean = email.trim().toLowerCase();
+    return this.state.admins.find(a => (a.email || '').trim().toLowerCase() === clean);
   }
 
   public addAdmin(admin: AdminUser): AdminUser {
