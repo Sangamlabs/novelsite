@@ -35,7 +35,7 @@ export const NovelCard: React.FC<NovelCardProps> = ({
   };
 
   return (
-    <article className="group relative flex flex-col justify-between glass-panel rounded-2xl p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md border border-white/75">
+    <article className="group relative h-full flex flex-col justify-between glass-panel rounded-2xl p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md border border-white/75">
       <div>
         {/* Cover Image Slot with 3:4 aspect ratio & resilient fallback */}
         <div className="relative aspect-[3/4] w-full overflow-hidden rounded-xl bg-[#DDE5D2]/40 mb-4 border border-[#2C3A22]/10">
