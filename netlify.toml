@@ -5,14 +5,13 @@
 [build.environment]
   NODE_VERSION = "20"
 
-# Optional backend proxy for split deployment:
-# If deploying frontend to Netlify and backend to Render,
-# set BACKEND_URL in Netlify environment variables or uncomment below:
-# [[redirects]]
-#   from = "/api/*"
-#   to = "https://your-render-service.onrender.com/api/:splat"
-#   status = 200
-#   force = true
+# Production backend proxy for Netlify:
+# Routes all /api/* requests directly to Render production backend
+[[redirects]]
+  from = "/api/*"
+  to = "https://novelsite.onrender.com/api/:splat"
+  status = 200
+  force = true
 
 # SPA fallback rewrite
 [[redirects]]
