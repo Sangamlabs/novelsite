@@ -3,6 +3,8 @@ import { Navigation } from './components/Navigation';
 import { Hero } from './components/Hero';
 import { ReadingProgressCards } from './components/ReadingProgressCards';
 import { NovelCard } from './components/NovelCard';
+import { HorizontalSlider } from './components/HorizontalSlider';
+import { ChapterSliderCard } from './components/ChapterSliderCard';
 import { NovelDetails } from './components/NovelDetails';
 import { ChapterReader } from './components/ChapterReader';
 import { ChapterArchive } from './components/ChapterArchive';
@@ -227,6 +229,41 @@ export default function App() {
   const featuredNovel = novels.find(n => n.slug === settings?.featured_novel_slug) || novels.find(n => n.is_featured) || novels[0];
   const latestPublishedChapter = chapters.length > 0 ? chapters[chapters.length - 1] : null;
 
+  // Curated category datasets based on actual database records
+  // A. Newly Released: sorted by latest created_at or updated_at
+  const newlyReleasedNovels = [...novels].sort((a, b) => {
+    const timeA = new Date(a.created_at || a.updated_at || 0).getTime();
+    const timeB = new Date(b.created_at || b.updated_at || 0).getTime();
+    return timeB - timeA;
+  });
+
+  // B. Top Trending: derived from reader activity (reading history), featured priority, and chapter volume
+  const trendingNovels = [...novels].sort((a, b) => {
+    const readingScoreA = readingHistory.filter(r => r.novel_slug === a.slug).length;
+    const readingScoreB = readingHistory.filter(r => r.novel_slug === b.slug).length;
+    if (readingScoreB !== readingScoreA) return readingScoreB - readingScoreA;
+    if (a.is_featured !== b.is_featured) return a.is_featured ? -1 : 1;
+    const chaptersA = chapters.filter(c => c.novel_slug === a.slug && c.status === 'published').length;
+    const chaptersB = chapters.filter(c => c.novel_slug === b.slug && c.status === 'published').length;
+    return chaptersB - chaptersA;
+  });
+
+  // C. All Ongoing: novels whose current status is ongoing
+  const ongoingNovels = novels.filter(n => n.status === 'ongoing');
+
+  // D. Completed: novels whose current status is completed
+  const completedNovels = novels.filter(n => n.status === 'completed');
+
+  // E. Latest Chapters: published chapters sorted chronologically
+  const latestPublishedChapters = [...chapters]
+    .filter(c => c.status === 'published')
+    .sort((a, b) => {
+      const timeA = new Date(a.published_at || a.created_at || 0).getTime();
+      const timeB = new Date(b.published_at || b.created_at || 0).getTime();
+      return timeB - timeA;
+    })
+    .slice(0, 12);
+
   // Filtered novels for discovery section
   const genresList = ['All', 'Botanical Fantasy', 'Literary Fiction', 'Mystery', 'Slice of Life', 'High Fantasy'];
   const filteredNovels = novels.filter(n => {
@@ -239,6 +276,15 @@ export default function App() {
   });
 
   const savedNovels = novels.filter(n => savedNovelSlugs.includes(n.slug));
+
+  const handleReadNovelDefault = (slug: string) => {
+    const chaptersForNovel = chapters.filter(c => c.novel_slug === slug && c.status === 'published');
+    if (chaptersForNovel.length > 0) {
+      handleOpenChapter(slug, chaptersForNovel[0].slug);
+    } else {
+      handleOpenNovel(slug);
+    }
+  };
 
   return (
     <div className="min-h-screen flex flex-col bg-[#EEF0E4] text-[#28311F] selection:bg-[#DDE5D2] selection:text-[#28311F]">
@@ -463,6 +509,141 @@ export default function App() {
               onOpenLibrary={() => setShowLibraryModal(true)}
             />
 
+            {/* Curated Category Sliders (Newly Released, Top Trending, Latest Chapters, Ongoing, Completed) */}
+            <div className="max-w-7xl mx-auto px-6 pt-4 pb-8 space-y-12">
+              
+              {/* Category A: Newly Released */}
+              <HorizontalSlider
+                categoryTag="New Additions"
+                title="Newly Released"
+                subtitle="Recent manuscripts and freshly cataloged literary serials."
+                count={newlyReleasedNovels.length}
+                onViewAll={() => {
+                  const el = document.getElementById('discovery');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                viewAllLabel="Explore All"
+                emptyMessage="No recently added manuscripts found."
+              >
+                {newlyReleasedNovels.map(novel => (
+                  <NovelCard
+                    key={`new-${novel.id}`}
+                    novel={novel}
+                    interfaceLanguage={interfaceLanguage}
+                    isBookmarked={savedNovelSlugs.includes(novel.slug)}
+                    onToggleBookmark={handleToggleBookmark}
+                    onSelect={handleOpenNovel}
+                    onRead={handleReadNovelDefault}
+                  />
+                ))}
+              </HorizontalSlider>
+
+              {/* Category B: Top Trending */}
+              <HorizontalSlider
+                categoryTag="Reader Favorites"
+                title="Top Trending"
+                subtitle="The most actively followed stories with high reader engagement."
+                count={trendingNovels.length}
+                onViewAll={() => {
+                  const el = document.getElementById('discovery');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                viewAllLabel="Browse Catalog"
+                emptyMessage="No trending manuscripts recorded yet."
+              >
+                {trendingNovels.map(novel => (
+                  <NovelCard
+                    key={`trend-${novel.id}`}
+                    novel={novel}
+                    interfaceLanguage={interfaceLanguage}
+                    isBookmarked={savedNovelSlugs.includes(novel.slug)}
+                    onToggleBookmark={handleToggleBookmark}
+                    onSelect={handleOpenNovel}
+                    onRead={handleReadNovelDefault}
+                  />
+                ))}
+              </HorizontalSlider>
+
+              {/* Category E: Latest Chapters */}
+              <HorizontalSlider
+                categoryTag="Fresh Inks"
+                title="Latest Chapters"
+                subtitle="Fresh installments and serialized drafts published across our library."
+                count={latestPublishedChapters.length}
+                onViewAll={() => handleNavigate('latest')}
+                viewAllLabel="Complete Archive"
+                emptyMessage="No published chapters found in the catalog."
+              >
+                {latestPublishedChapters.map(chapter => {
+                  const novel = novels.find(n => n.slug === chapter.novel_slug || n.id === chapter.novel_id);
+                  return (
+                    <ChapterSliderCard
+                      key={`ch-${chapter.id}`}
+                      chapter={chapter}
+                      novel={novel}
+                      onReadChapter={handleOpenChapter}
+                      onOpenNovel={handleOpenNovel}
+                    />
+                  );
+                })}
+              </HorizontalSlider>
+
+              {/* Category C: All Ongoing */}
+              <HorizontalSlider
+                categoryTag="Active Chronicles"
+                title="All Ongoing"
+                subtitle="Serials actively being written with new chapters in progress."
+                count={ongoingNovels.length}
+                onViewAll={() => {
+                  setGenreFilter('All');
+                  const el = document.getElementById('discovery');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                viewAllLabel="View All Ongoing"
+                emptyMessage="No ongoing serials at this time."
+              >
+                {ongoingNovels.map(novel => (
+                  <NovelCard
+                    key={`ong-${novel.id}`}
+                    novel={novel}
+                    interfaceLanguage={interfaceLanguage}
+                    isBookmarked={savedNovelSlugs.includes(novel.slug)}
+                    onToggleBookmark={handleToggleBookmark}
+                    onSelect={handleOpenNovel}
+                    onRead={handleReadNovelDefault}
+                  />
+                ))}
+              </HorizontalSlider>
+
+              {/* Category D: Completed */}
+              <HorizontalSlider
+                categoryTag="Finished Epics"
+                title="Completed"
+                subtitle="Complete literary serials ready to be read from prologue to finale."
+                count={completedNovels.length}
+                onViewAll={() => {
+                  setGenreFilter('All');
+                  const el = document.getElementById('discovery');
+                  if (el) el.scrollIntoView({ behavior: 'smooth' });
+                }}
+                viewAllLabel="Browse Completed"
+                emptyMessage="No completed manuscripts yet. All current stories are actively ongoing."
+              >
+                {completedNovels.map(novel => (
+                  <NovelCard
+                    key={`comp-${novel.id}`}
+                    novel={novel}
+                    interfaceLanguage={interfaceLanguage}
+                    isBookmarked={savedNovelSlugs.includes(novel.slug)}
+                    onToggleBookmark={handleToggleBookmark}
+                    onSelect={handleOpenNovel}
+                    onRead={handleReadNovelDefault}
+                  />
+                ))}
+              </HorizontalSlider>
+
+            </div>
+
             {/* Novel Discovery Section */}
             <section id="discovery" className="max-w-7xl mx-auto px-6 py-16">
               
@@ -540,14 +721,7 @@ export default function App() {
                       isBookmarked={savedNovelSlugs.includes(novel.slug)}
                       onToggleBookmark={handleToggleBookmark}
                       onSelect={handleOpenNovel}
-                      onRead={(slug) => {
-                        const chaptersForNovel = chapters.filter(c => c.novel_slug === slug && c.status === 'published');
-                        if (chaptersForNovel.length > 0) {
-                          handleOpenChapter(slug, chaptersForNovel[0].slug);
-                        } else {
-                          handleOpenNovel(slug);
-                        }
-                      }}
+                      onRead={handleReadNovelDefault}
                     />
                   ))}
                 </div>
