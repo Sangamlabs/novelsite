@@ -1,5 +1,5 @@
 import React from 'react';
-import { Feather, Shield } from 'lucide-react';
+import { Feather, Shield, Mail, Send } from 'lucide-react';
 
 interface FooterProps {
   onNavigate: (view: string) => void;
@@ -34,25 +34,25 @@ export const Footer: React.FC<FooterProps> = ({
           </p>
         </div>
 
-        {/* Navigation Columns */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-8 text-xs text-[#68715F]">
+        {/* Navigation & Contact Columns */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-8 text-xs text-[#68715F]">
           <div>
             <span className="uppercase tracking-widest text-[#28311F] font-semibold block mb-3">
               Catalog
             </span>
             <ul className="space-y-2">
               <li>
-                <button onClick={() => onNavigate('explore')} className="hover:text-[#28311F] transition-colors">
+                <button onClick={() => onNavigate('explore')} className="hover:text-[#28311F] transition-colors cursor-pointer">
                   Explore Stories
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('genres')} className="hover:text-[#28311F] transition-colors">
+                <button onClick={() => onNavigate('genres')} className="hover:text-[#28311F] transition-colors cursor-pointer">
                   Browse Genres
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('latest')} className="hover:text-[#28311F] transition-colors">
+                <button onClick={() => onNavigate('latest')} className="hover:text-[#28311F] transition-colors cursor-pointer">
                   Latest Chapters
                 </button>
               </li>
@@ -65,17 +65,17 @@ export const Footer: React.FC<FooterProps> = ({
             </span>
             <ul className="space-y-2">
               <li>
-                <button onClick={() => onNavigate('about')} className="hover:text-[#28311F] transition-colors">
+                <button onClick={() => onNavigate('about')} className="hover:text-[#28311F] transition-colors cursor-pointer">
                   About Akhyana
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('privacy')} className="hover:text-[#28311F] transition-colors">
+                <button onClick={() => onNavigate('privacy')} className="hover:text-[#28311F] transition-colors cursor-pointer">
                   Privacy Policy
                 </button>
               </li>
               <li>
-                <button onClick={() => onNavigate('terms')} className="hover:text-[#28311F] transition-colors">
+                <button onClick={() => onNavigate('terms')} className="hover:text-[#28311F] transition-colors cursor-pointer">
                   Terms of Use
                 </button>
               </li>
@@ -89,12 +89,12 @@ export const Footer: React.FC<FooterProps> = ({
             <ul className="space-y-2">
               <li>
                 {isLoggedIn ? (
-                  <button onClick={() => onNavigate('admin')} className="text-[#2C3A22] font-semibold hover:underline flex items-center gap-1">
+                  <button onClick={() => onNavigate('admin')} className="text-[#2C3A22] font-semibold hover:underline flex items-center gap-1 cursor-pointer">
                     <Shield className="w-3 h-3" />
                     <span>Author Studio</span>
                   </button>
                 ) : (
-                  <button onClick={onOpenLogin} className="hover:text-[#28311F] transition-colors flex items-center gap-1">
+                  <button onClick={onOpenLogin} className="hover:text-[#28311F] transition-colors flex items-center gap-1 cursor-pointer">
                     <Shield className="w-3 h-3" />
                     <span>Author Login</span>
                   </button>
@@ -102,6 +102,39 @@ export const Footer: React.FC<FooterProps> = ({
               </li>
               <li className="text-[#68715F]/80">
                 English · 日本語 · Hinglish
+              </li>
+            </ul>
+          </div>
+
+          <div>
+            <span className="uppercase tracking-widest text-[#28311F] font-semibold block mb-3">
+              Contact
+            </span>
+            <ul className="space-y-2.5">
+              <li>
+                <a
+                  href="mailto:akhyanaweb@gmail.com"
+                  className="hover:text-[#28311F] transition-colors flex items-center gap-1.5 group"
+                  aria-label="Send email to akhyanaweb@gmail.com"
+                >
+                  <Mail className="w-3.5 h-3.5 text-[#B08D46] shrink-0" />
+                  <span className="truncate">akhyanaweb@gmail.com</span>
+                </a>
+              </li>
+              <li>
+                <a
+                  href="https://t.me/akhyana_studio"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hover:text-[#28311F] transition-colors flex items-center gap-1.5 group"
+                  aria-label="Open Telegram channel @akhyana_studio"
+                >
+                  <Send className="w-3.5 h-3.5 text-[#B08D46] shrink-0" />
+                  <span>@akhyana_studio</span>
+                </a>
+              </li>
+              <li className="text-[#68715F]/75 pt-1 text-[11px] leading-relaxed">
+                Direct press & translation desk
               </li>
             </ul>
           </div>
