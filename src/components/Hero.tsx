@@ -2,7 +2,7 @@ import React from 'react';
 import { Compass, BookOpen } from 'lucide-react';
 import { Novel, LanguageCode } from '../types';
 import { UI_TRANSLATIONS } from '../utils/translations';
-
+import forestBackground from '../assets/images/forest_quiet_hero_bg_1792815708624.jpg';
 interface HeroProps {
   onExplore: () => void;
   onContinueReading: () => void;
@@ -25,9 +25,8 @@ export const Hero: React.FC<HeroProps> = ({
       {/* Botanical Forest Quiet Background Layer */}
       <div className="absolute inset-0 z-0 pointer-events-none">
         <img
-          src="/src/assets/images/forest_quiet_hero_bg_1792815708624.jpg"
+          src={forestBackground}
           alt="Tranquil sage sunlit botanical background"
-          referrerPolicy="no-referrer"
           className="w-full h-full object-cover object-center opacity-85"
         />
         {/* Soft center vignette to maintain exquisite contrast and text readability */}
