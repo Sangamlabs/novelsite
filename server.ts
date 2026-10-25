@@ -5,6 +5,8 @@ import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import dotenv from 'dotenv';
 import { db, AdminUser } from './src/server/db.ts';
+import { logger, maskEmail } from './src/server/logger.ts';
+import { uploadCoverImage } from './src/server/upload.ts';
 
 dotenv.config();
 
@@ -19,6 +21,37 @@ if (!fs.existsSync(COVERS_DIR)) {
   fs.mkdirSync(COVERS_DIR, { recursive: true });
 }
 app.use('/uploads', express.static(UPLOADS_ROOT));
+
+// Request correlation ID and structured HTTP access logging
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const reqId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
+  (req as any).id = reqId;
+  res.setHeader('X-Request-Id', reqId);
+  const startTime = Date.now();
+
+  res.on('finish', () => {
+    const durationMs = Date.now() - startTime;
+    if (req.path.startsWith('/api')) {
+      const logContext = {
+        requestId: reqId,
+        method: req.method,
+        path: req.path,
+        statusCode: res.statusCode,
+        durationMs,
+        ip: req.ip || req.socket.remoteAddress
+      };
+
+      if (res.statusCode >= 500) {
+        logger.error('http.request.failed', `${req.method} ${req.path} -> ${res.statusCode} (${durationMs}ms)`, undefined, logContext);
+      } else if (res.statusCode >= 400) {
+        logger.warn('http.request.client_error', `${req.method} ${req.path} -> ${res.statusCode} (${durationMs}ms)`, logContext);
+      } else {
+        logger.info('http.request.completed', `${req.method} ${req.path} -> ${res.statusCode} (${durationMs}ms)`, logContext);
+      }
+    }
+  });
+  next();
+});
 
 // Parse JSON bodies (up to 10MB to accommodate high-res covers before compression)
 app.use(express.json({ limit: '10mb' }));
@@ -44,7 +77,7 @@ app.use((req, res, next) => {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Access-Control-Allow-Credentials', 'true');
       res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
-      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-Id');
     }
   }
   if (req.method === 'OPTIONS') {
@@ -142,27 +175,70 @@ app.get('/api/health', (_req, res) => {
 });
 
 // Authentication endpoints
-app.post('/api/auth/login', (req: Request, res: Response) => {
-  const ip = req.ip || '127.0.0.1';
+app.post('/api/auth/login', async (req: Request, res: Response) => {
+  const reqId = (req as any).id;
+  const ip = req.ip || req.socket.remoteAddress || '127.0.0.1';
+
+  const { email, password } = req.body;
+  const cleanEmail = (email || '').trim().toLowerCase();
+
   if (!checkRateLimit(ip)) {
+    logger.warn('auth.login.rate_limited', 'Login rate limit reached for client IP', {
+      requestId: reqId,
+      ip,
+      email: cleanEmail
+    });
     res.status(429).json({ error: 'Too many login attempts. Please wait 1 minute.' });
     return;
   }
 
-  const { email, password } = req.body;
-  if (!email || !password) {
+  if (!cleanEmail || !password) {
+    logger.warn('auth.login.missing_credentials', 'Login attempted without email or password', {
+      requestId: reqId,
+      ip
+    });
     res.status(400).json({ error: 'Email and password are required' });
     return;
   }
 
-  const admin = db.findAdminByEmail(email);
+  const admin = await db.findAdminByEmail(cleanEmail);
   if (!admin) {
+    logger.warn('auth.login.failed', 'Admin authentication failed: email not found', {
+      requestId: reqId,
+      ip,
+      email: cleanEmail,
+      reason: 'unknown_email'
+    });
     res.status(401).json({ error: 'Invalid email or password' });
     return;
   }
 
-  const matches = bcrypt.compareSync(password, admin.password_hash);
+  let matches = false;
+  if (admin.password_hash) {
+    if (admin.password_hash.startsWith('$2a$') || admin.password_hash.startsWith('$2b$') || admin.password_hash.startsWith('$2y$')) {
+      matches = bcrypt.compareSync(password, admin.password_hash);
+    } else {
+      // In case password_hash is stored in plain text from environment or legacy migration, securely verify and upgrade
+      matches = (password === admin.password_hash);
+      if (matches) {
+        admin.password_hash = bcrypt.hashSync(password, 10);
+        logger.info('auth.password.upgraded', 'Legacy password hash automatically upgraded to bcrypt', {
+          requestId: reqId,
+          adminId: admin.id,
+          email: cleanEmail
+        });
+      }
+    }
+  }
+
   if (!matches) {
+    logger.warn('auth.login.failed', 'Admin authentication failed: invalid password', {
+      requestId: reqId,
+      ip,
+      email: cleanEmail,
+      adminId: admin.id,
+      reason: 'invalid_password'
+    });
     res.status(401).json({ error: 'Invalid email or password' });
     return;
   }
@@ -182,12 +258,20 @@ app.post('/api/auth/login', (req: Request, res: Response) => {
 
   sessions.set(token, sessionData);
 
-  // Set HTTP-only cookie if supported, plus return token for client header storage
+  // Set HTTP-only cookie with cross-site support if deployed
   res.cookie('akhyana_session', token, {
     httpOnly: true,
     secure: isProd,
-    sameSite: 'lax',
+    sameSite: isProd ? 'none' : 'lax',
     maxAge: 24 * 60 * 60 * 1000
+  });
+
+  logger.info('auth.login.success', 'Administrator authenticated successfully', {
+    requestId: reqId,
+    ip,
+    adminId: admin.id,
+    email: cleanEmail,
+    role: admin.role
   });
 
   res.json({
@@ -208,7 +292,14 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
     const token = authHeader.substring(7);
     sessions.delete(token);
   }
-  res.clearCookie('akhyana_session');
+  res.clearCookie('akhyana_session', {
+    httpOnly: true,
+    secure: isProd,
+    sameSite: isProd ? 'none' : 'lax'
+  });
+  logger.info('auth.logout.success', 'Session terminated', {
+    requestId: (req as any).id
+  });
   res.json({ success: true });
 });
 
@@ -224,13 +315,14 @@ app.get('/api/admin/users', authenticate, authorizeRoles('owner'), (_req, res) =
   res.json(admins);
 });
 
-app.post('/api/admin/users', authenticate, authorizeRoles('owner'), (req, res) => {
+app.post('/api/admin/users', authenticate, authorizeRoles('owner'), async (req, res) => {
   const { email, name, role, password } = req.body;
   if (!email || !password || !name) {
     res.status(400).json({ error: 'Missing required admin fields' });
     return;
   }
-  const existing = db.findAdminByEmail(email);
+  const cleanEmail = email.trim().toLowerCase();
+  const existing = await db.findAdminByEmail(cleanEmail);
   if (existing) {
     res.status(409).json({ error: 'Admin email already exists' });
     return;
@@ -450,96 +542,14 @@ app.delete('/api/chapters/:id', authenticate, authorizeRoles('owner', 'admin'), 
   res.json({ success: true });
 });
 
-// Catbox (primary) & Yukisbox (fallback) storage handler
-async function uploadToRemoteCoverStorage(
-  buffer: Buffer,
-  filename: string,
-  mime: string,
-  localTargetFilePath: string
-): Promise<{ url: string; provider: 'catbox' | 'yukisbox' | 'local' }> {
-  // Always save a local copy to guarantee zero data loss
-  try {
-    fs.writeFileSync(localTargetFilePath, buffer);
-  } catch (err) {
-    console.warn('[Storage] Warning saving local disk copy:', err);
-  }
-
-  // 1. Primary: Catbox (https://catbox.moe/user/api.php)
-  try {
-    const formData = new FormData();
-    formData.append('reqtype', 'fileupload');
-    if (process.env.CATBOX_USERHASH) {
-      formData.append('userhash', process.env.CATBOX_USERHASH);
-    }
-    const blob = new Blob([new Uint8Array(buffer)], { type: mime });
-    formData.append('fileToUpload', blob, filename);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 7000);
-
-    const res = await fetch('https://catbox.moe/user/api.php', {
-      method: 'POST',
-      body: formData,
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Akhyana-Platform/1.0'
-      }
-    });
-    clearTimeout(timeout);
-
-    if (res.ok) {
-      const text = (await res.text()).trim();
-      if (text.startsWith('http://') || text.startsWith('https://')) {
-        console.log('[Storage] Cover successfully uploaded to Catbox (Primary):', text);
-        return { url: text, provider: 'catbox' };
-      }
-    }
-  } catch (err: any) {
-    console.warn('[Storage] Catbox primary upload not available or timed out:', err.message);
-  }
-
-  // 2. Secondary: Yukisbox Fallback (https://yukiapi.site/v1/upload)
-  try {
-    const formData = new FormData();
-    const blob = new Blob([new Uint8Array(buffer)], { type: mime });
-    formData.append('file', blob, filename);
-
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 7000);
-
-    const res = await fetch('https://yukiapi.site/v1/upload', {
-      method: 'POST',
-      body: formData,
-      signal: controller.signal,
-      headers: {
-        'User-Agent': 'Akhyana-Platform/1.0'
-      }
-    });
-    clearTimeout(timeout);
-
-    if (res.ok) {
-      const json: any = await res.json().catch(() => null);
-      const url = json?.url || json?.data?.url || (json?.data?.file?.url) || null;
-      if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
-        console.log('[Storage] Cover successfully uploaded to Yukisbox (Fallback):', url);
-        return { url, provider: 'yukisbox' };
-      }
-    }
-  } catch (err: any) {
-    console.warn('[Storage] Yukisbox fallback upload not available or timed out:', err.message);
-  }
-
-  // 3. Fallback: Local disk storage
-  const localUrl = `/uploads/covers/${path.basename(localTargetFilePath)}`;
-  console.log('[Storage] Using local persistent disk storage fallback:', localUrl);
-  return { url: localUrl, provider: 'local' };
-}
-
 // Cover image upload endpoint (Protected: owner, admin, editor)
-app.post('/api/upload/cover', authenticate, authorizeRoles('owner', 'admin', 'editor'), async (req: Request, res: Response) => {
+// Integrates Catbox (Primary) + Yukisbox (Fallback) per documentation
+app.post('/api/upload/cover', authenticate,  authorizeRoles('owner', 'admin', 'editor'), async (req: Request, res: Response) => {
+  const reqId = (req as any).id;
   try {
-    const { data, filename } = req.body;
+    const { data, filename, customSlug } = req.body;
     if (!data || typeof data !== 'string') {
+      logger.warn('cover.upload.missing_data', 'Missing image data in upload request', { requestId: reqId });
       res.status(400).json({ error: 'Image data is required' });
       return;
     }
@@ -547,6 +557,7 @@ app.post('/api/upload/cover', authenticate, authorizeRoles('owner', 'admin', 'ed
     // Match data URL pattern
     const match = data.match(/^data:(image\/(jpeg|jpg|png|webp));base64,(.+)$/i);
     if (!match) {
+      logger.warn('cover.upload.invalid_format', 'Unsupported image format in data URL', { requestId: reqId });
       res.status(400).json({ error: 'Unsupported format. Only JPEG, PNG, and WebP are allowed.' });
       return;
     }
@@ -558,6 +569,10 @@ app.post('/api/upload/cover', authenticate, authorizeRoles('owner', 'admin', 'ed
     // 5MB limit check
     const MAX_SIZE = 5 * 1024 * 1024;
     if (buffer.length > MAX_SIZE) {
+      logger.warn('cover.upload.oversized', 'Image exceeds 5MB size limit', {
+        requestId: reqId,
+        sizeBytes: buffer.length
+      });
       res.status(400).json({ error: 'File size exceeds the 5MB limit.' });
       return;
     }
@@ -579,6 +594,7 @@ app.post('/api/upload/cover', authenticate, authorizeRoles('owner', 'admin', 'ed
     }
 
     if (!validMagic) {
+      logger.warn('cover.upload.corrupt_bytes', 'Image magic bytes validation failed', { requestId: reqId, mime });
       res.status(400).json({ error: 'File appears corrupt or invalid for the selected image type.' });
       return;
     }
@@ -588,18 +604,50 @@ app.post('/api/upload/cover', authenticate, authorizeRoles('owner', 'admin', 'ed
       .replace(/[^a-zA-Z0-9_-]/g, '_')
       .substring(0, 30);
     const uniqueFileName = `${safeBase}_${Date.now()}_${crypto.randomBytes(4).toString('hex')}.${ext}`;
-    const targetPath = path.join(COVERS_DIR, uniqueFileName);
 
-    const { url, provider } = await uploadToRemoteCoverStorage(buffer, uniqueFileName, mime, targetPath);
+    // Persist local disk copy as fallback cache
+    try {
+      const targetPath = path.join(COVERS_DIR, uniqueFileName);
+      fs.writeFileSync(targetPath, buffer);
+    } catch (fsErr: any) {
+      logger.debug('cover.local_cache.notice', 'Local disk cache notice', { requestId: reqId, error: fsErr.message });
+    }
+
+    // Upload with Catbox primary + Yukisbox fallback
+    const result = await uploadCoverImage({
+      buffer,
+      filename: uniqueFileName,
+      mimeType: mime,
+      requestId: reqId,
+      customSlug
+    });
+
+    if (!result.success || !result.url) {
+      logger.error('cover.upload.failed_both_providers', 'Failed to upload cover across both remote hosts', undefined, {
+        requestId: reqId,
+        catboxError: result.catboxError,
+        yukisboxError: result.yukisboxError,
+        filename: uniqueFileName
+      });
+      res.status(502).json({
+        error: 'Remote image upload failed across both primary (Catbox) and fallback (Yukisbox) providers.',
+        details: {
+          catbox: result.catboxError,
+          yukisbox: result.yukisboxError
+        }
+      });
+      return;
+    }
 
     res.status(201).json({
-      url,
-      provider,
+      url: result.url,
+      provider: result.provider,
       filename: uniqueFileName,
+      fileId: result.fileId,
       size: buffer.length
     });
   } catch (err: any) {
-    console.error('[Upload] Error saving cover:', err);
+    logger.error('cover.upload.unhandled_error', 'Unhandled error processing image upload', err, { requestId: reqId });
     res.status(500).json({ error: 'Failed to process image upload' });
   }
 });
@@ -763,6 +811,37 @@ app.put('/api/site-settings', authenticate, authorizeRoles('owner', 'admin'), (r
   res.json(updated);
 });
 
+// 404 handler for undefined API routes
+app.all('/api/*', (req, res) => {
+  const reqId = (req as any).id;
+  logger.warn('http.api.not_found', `API endpoint not found: ${req.method} ${req.path}`, {
+    requestId: reqId,
+    method: req.method,
+    path: req.path
+  });
+  res.status(404).json({
+    error: 'API endpoint not found',
+    path: req.path,
+    requestId: reqId
+  });
+});
+
+// Centralized unhandled error handler middleware
+app.use((err: any, req: Request, res: Response, _next: NextFunction) => {
+  const reqId = (req as any).id || crypto.randomUUID();
+  logger.error('server.unhandled_error', 'Unhandled server error during request processing', err, {
+    requestId: reqId,
+    method: req.method,
+    path: req.path
+  });
+  if (!res.headersSent) {
+    res.status(500).json({
+      error: 'An internal server error occurred',
+      requestId: reqId
+    });
+  }
+});
+
 /* ========================================================================== */
 /*                           SERVER INITIALIZATION                            */
 /* ========================================================================== */
@@ -785,11 +864,17 @@ async function startServer() {
   }
 
   app.listen(PORT, '0.0.0.0', () => {
-    console.log(`[Akhyana] Literary Platform active on http://0.0.0.0:${PORT}`);
+    logger.info('server.startup', `Akhyana platform backend listening on port ${PORT}`, {
+      port: PORT,
+      environment: process.env.NODE_ENV || 'development',
+      hasPostgres: !!process.env.DATABASE_URL,
+      hasOwnerConfig: !!process.env.OWNER_EMAIL,
+      ownerEmail: maskEmail(process.env.OWNER_EMAIL || 'owner@akhyana.lit')
+    });
   });
 }
 
 startServer().catch(err => {
-  console.error('Failed to start Akhyana server:', err);
+  logger.error('server.startup.fatal', 'Failed to start Akhyana server', err);
   process.exit(1);
 });
