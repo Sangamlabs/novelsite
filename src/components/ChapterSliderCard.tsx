@@ -31,13 +31,13 @@ export const ChapterSliderCard: React.FC<ChapterSliderCardProps> = ({
   const readMinutes = Math.max(1, Math.ceil((chapter.word_count || 1200) / 200));
 
   return (
-    <article className="group h-full flex flex-col justify-between glass-panel rounded-2xl p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md border border-white/75 font-serif">
+    <article className="group h-full flex flex-col justify-between glass-panel rounded-xl sm:rounded-2xl p-3.5 sm:p-5 transition-all duration-300 hover:-translate-y-1 hover:shadow-md border border-white/75 font-serif select-none">
       <div>
         {/* Cover Thumbnail / Header Slot */}
-        <div className="flex items-center gap-3 mb-4 pb-3 border-b border-[#2C3A22]/10">
+        <div className="flex items-center gap-2.5 sm:gap-3 mb-3 pb-2.5 border-b border-[#2C3A22]/10">
           <div
             onClick={() => onOpenNovel(chapter.novel_slug)}
-            className="w-12 h-16 rounded-lg bg-[#DDE5D2]/50 overflow-hidden shrink-0 border border-[#2C3A22]/15 cursor-pointer shadow-2xs"
+            className="w-10 h-14 sm:w-12 sm:h-16 rounded-lg bg-[#DDE5D2]/50 overflow-hidden shrink-0 border border-[#2C3A22]/15 cursor-pointer shadow-2xs"
           >
             {novelCover ? (
               <img
@@ -48,7 +48,7 @@ export const ChapterSliderCard: React.FC<ChapterSliderCardProps> = ({
               />
             ) : (
               <div className="w-full h-full flex items-center justify-center text-[#2C3A22]/50">
-                <BookOpen className="w-5 h-5" />
+                <BookOpen className="w-4 h-4" />
               </div>
             )}
           </div>
@@ -57,7 +57,7 @@ export const ChapterSliderCard: React.FC<ChapterSliderCardProps> = ({
             <button
               type="button"
               onClick={() => onOpenNovel(chapter.novel_slug)}
-              className="text-xs font-serif text-[#B08D46] hover:underline truncate block w-full text-left font-medium"
+              className="text-xs font-serif text-[#B08D46] hover:underline truncate block w-full text-left font-medium cursor-pointer"
               title={novelTitle}
             >
               {novelTitle}
@@ -69,7 +69,7 @@ export const ChapterSliderCard: React.FC<ChapterSliderCardProps> = ({
         </div>
 
         {/* Unboxed Metadata (Zero-Pill Discipline) */}
-        <div className="flex items-center gap-2 text-[11px] text-[#68715F] font-serif mb-2 flex-wrap">
+        <div className="flex items-center gap-1.5 text-[10px] sm:text-[11px] text-[#68715F] font-serif mb-2 flex-wrap">
           <span className="flex items-center gap-1">
             <Calendar className="w-3 h-3 text-[#2C3A22]/60" />
             {dateFormatted}
@@ -77,12 +77,12 @@ export const ChapterSliderCard: React.FC<ChapterSliderCardProps> = ({
           <span aria-hidden="true">·</span>
           <span className="flex items-center gap-1">
             <Clock className="w-3 h-3 text-[#2C3A22]/60" />
-            {readMinutes} min read
+            {readMinutes}m read
           </span>
           {chapter.word_count > 0 && (
             <>
               <span aria-hidden="true">·</span>
-              <span>{chapter.word_count.toLocaleString()} words</span>
+              <span>{chapter.word_count.toLocaleString()}w</span>
             </>
           )}
         </div>
@@ -90,7 +90,7 @@ export const ChapterSliderCard: React.FC<ChapterSliderCardProps> = ({
         {/* Chapter Title */}
         <h3
           onClick={() => onReadChapter(chapter.novel_slug, chapter.slug)}
-          className="text-lg font-serif font-medium text-[#28311F] leading-snug cursor-pointer group-hover:text-[#2C3A22] transition-colors line-clamp-2"
+          className="text-sm sm:text-base md:text-lg font-serif font-medium text-[#28311F] leading-snug cursor-pointer group-hover:text-[#2C3A22] transition-colors line-clamp-2"
           title={chapter.title}
         >
           {chapter.title}
@@ -98,14 +98,14 @@ export const ChapterSliderCard: React.FC<ChapterSliderCardProps> = ({
 
         {/* Chapter Snippet preview if available */}
         {chapter.body && (
-          <p className="text-xs text-[#68715F] font-serif line-clamp-2 mt-2 leading-relaxed italic">
-            "{chapter.body.slice(0, 120)}..."
+          <p className="text-[11px] sm:text-xs text-[#68715F] font-serif line-clamp-2 mt-1.5 leading-relaxed italic">
+            "{chapter.body.slice(0, 110)}..."
           </p>
         )}
       </div>
 
       {/* Action Footer */}
-      <div className="mt-5 pt-3 border-t border-[#2C3A22]/10 flex items-center justify-between gap-3">
+      <div className="mt-3.5 pt-2.5 border-t border-[#2C3A22]/10 flex items-center justify-between gap-2">
         <button
           type="button"
           onClick={() => onOpenNovel(chapter.novel_slug)}
@@ -117,7 +117,7 @@ export const ChapterSliderCard: React.FC<ChapterSliderCardProps> = ({
         <button
           type="button"
           onClick={() => onReadChapter(chapter.novel_slug, chapter.slug)}
-          className="px-3 py-1.5 bg-[#2C3A22] text-[#EEF0E4] hover:bg-[#1D2716] rounded-lg text-xs font-serif uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs"
+          className="px-2.5 sm:px-3 py-1 sm:py-1.5 bg-[#2C3A22] text-[#EEF0E4] hover:bg-[#1D2716] rounded-lg text-xs font-serif uppercase tracking-wider transition-colors flex items-center gap-1.5 cursor-pointer shadow-2xs active:scale-95"
         >
           <Feather className="w-3 h-3" />
           <span>Read</span>
