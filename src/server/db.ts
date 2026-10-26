@@ -468,12 +468,21 @@ const SEED_ADMINS: AdminUser[] = [
 ];
 
 // PostgreSQL connection pool (activated when DATABASE_URL is configured)
-const pgPool = process.env.DATABASE_URL
-  ? new Pool({
+let pgPool: InstanceType<typeof Pool> | null = null;
+try {
+  if (process.env.DATABASE_URL) {
+    pgPool = new Pool({
       connectionString: process.env.DATABASE_URL,
       ssl: process.env.DATABASE_URL.includes('localhost') ? false : { rejectUnauthorized: false }
-    })
-  : null;
+    });
+    pgPool.on('error', (err: any) => {
+      logger.warn('db.pool.idle_error', 'Unexpected error on idle PostgreSQL client (safe fallback active)', { error: err.message });
+    });
+  }
+} catch (err: any) {
+  logger.warn('db.init.error', 'Failed to initialize PostgreSQL pool, continuing with local store', { error: err.message });
+  pgPool = null;
+}
 
 class DatabaseManager {
   private state: DatabaseState;
