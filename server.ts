@@ -622,26 +622,23 @@ app.post('/api/upload/cover', authenticate,  authorizeRoles('owner', 'admin', 'e
       customSlug
     });
 
+    let finalUrl = result.url;
+    let finalProvider = result.provider || 'local';
+
     if (!result.success || !result.url) {
-      logger.error('cover.upload.failed_both_providers', 'Failed to upload cover across both remote hosts', undefined, {
+      logger.warn('cover.upload.using_local_fallback', 'Remote image upload unavailable; falling back to local storage', {
         requestId: reqId,
         catboxError: result.catboxError,
         yukisboxError: result.yukisboxError,
         filename: uniqueFileName
       });
-      res.status(502).json({
-        error: 'Remote image upload failed across both primary (Catbox) and fallback (Yukisbox) providers.',
-        details: {
-          catbox: result.catboxError,
-          yukisbox: result.yukisboxError
-        }
-      });
-      return;
+      finalUrl = `/uploads/covers/${uniqueFileName}`;
+      finalProvider = 'local' as any;
     }
 
     res.status(201).json({
-      url: result.url,
-      provider: result.provider,
+      url: finalUrl,
+      provider: finalProvider,
       filename: uniqueFileName,
       fileId: result.fileId,
       size: buffer.length
